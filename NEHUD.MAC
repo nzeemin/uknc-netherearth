@@ -2,6 +2,8 @@
 ; The right panel ("STATUS") next to the game area: texts and numbers, drawn by the PPU as a list of
 ; strings (CMDSTS). Layout and colors are from the Z80 code Ld1e5_draw_in_game_right_hud and
 ; Ld293_update_stats_in_right_hud; the panel is 10 characters wide, row = row of the ZX screen.
+; The status table is 12 columns wide: the number of the enemy (column 0), a space, the name (8), a space, the number of
+; the player (column 11); the resources part (green names + numbers) is 10 columns wide, columns 1..11.
 ; Colors: 3-bit GRB indices (1 blue, 2 red, 4 green, 5 cyan, 6 yellow, 7 white).
 
 ; A string of the panel: row, column in the panel, ink, paper, text
@@ -13,26 +15,26 @@
 
 ; The static part
 HUDTAB:
-	HSTR	0., 0., 7, 2, < DAY:>
-	HSTR	1., 0., 7, 2, <TIME:>
-	HSTR	3., 0., 6, 0, <  STATUS>
-	HSTR	4., 0., 6, 0, <INSG  HUMN>
-	HSTR	6., 1., 5, 0, <WARBASES>
-	HSTR	7., 1., 5, 0, <ELECTR'S>
-	HSTR	8., 1., 5, 0, <NUCLEAR>
-	HSTR	9., 1., 5, 0, <PHASERS>
-	HSTR	10., 1., 5, 0, <MISSILES>
-	HSTR	11., 1., 5, 0, < CANNON>
-	HSTR	12., 1., 5, 0, <CHASSIS>
-	HSTR	13., 1., 5, 0, < ROBOTS>
-	HSTR	15., 1., 6, 0, <RESOURCES>
-	HSTR	17., 1., 4, 0, <GENERAL>
-	HSTR	18., 1., 4, 0, <ELECTR'>
-	HSTR	19., 1., 4, 0, <NUCLEAR>
-	HSTR	20., 1., 4, 0, <PHASERS>
-	HSTR	21., 1., 4, 0, <MISSILE>
-	HSTR	22., 1., 4, 0, <CANNON>
-	HSTR	23., 1., 4, 0, <CHASSIS>
+	HSTR	0., 1., 7, 0, < DAY: >
+	HSTR	1., 1., 7, 0, <TIME: >
+	HSTR	3., 0., 6, 0, <   STATUS>
+	HSTR	4., 0., 6, 0, <INSIG  HUMAN>
+	HSTR	6., 2., 5, 0, <WARBASES>
+	HSTR	7., 2., 5, 0, <ELECTR'S>
+	HSTR	8., 2., 5, 0, <NUCLEAR>
+	HSTR	9., 2., 5, 0, <PHASERS>
+	HSTR	10., 2., 5, 0, <MISSILES>
+	HSTR	11., 2., 5, 0, < CANNON>
+	HSTR	12., 2., 5, 0, <CHASSIS>
+	HSTR	13., 2., 5, 0, < ROBOTS>
+	HSTR	15., 2., 6, 0, <RESOURCES>
+	HSTR	17., 1., 4, 0, <GENERAL >
+	HSTR	18., 1., 4, 0, <ELECTR' >
+	HSTR	19., 1., 4, 0, <NUCLEAR >
+	HSTR	20., 1., 4, 0, <PHASERS >
+	HSTR	21., 1., 4, 0, <MISSILE >
+	HSTR	22., 1., 4, 0, <CANNON >
+	HSTR	23., 1., 4, 0, <CHASSIS >
 ; "RADAR:" under the game area, double height (control code 4, '2'), two tile rows
 	.WORD	SCREEN+<23.*TILEH*LINEW>+<VIEW_COL-1>, 5, 0
 	.BYTE	4, '2
@@ -60,17 +62,17 @@ DRTIME:	TST	@#PPUCOM
 ; Builds the strings with the numbers of the panel in HUDBUF
 HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
 	CALL	HBTIME
-; the resources of the player: 7 numbers, rows 17..23, columns 8..9
+; the resources of the player: 7 numbers, rows 17..23, columns 10..11, white on black
 	MOV	#2, HDIGS
 	MOV	#' , HFILL
 	MOV	#Lfd22_player1_resource_counts, R5
-	MOV	#<SCREEN+<17.*TILEH*LINEW>+HUD_COL+8.>, HSCR
+	MOV	#<SCREEN+<17.*TILEH*LINEW>+HUD_COL+10.>, HSCR
 	MOV	#7, HCNT
 10$:	CLR	R0
 	BISB	(R5)+, R0
 	MOV	HSCR, R1
-	MOV	#6, R2
-	MOV	#1, R3
+	MOV	#7, R2
+	CLR	R3
 	CALL	HBNUM
 	ADD	#<TILEH*LINEW>, HSCR
 	DEC	HCNT
@@ -82,17 +84,17 @@ HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
 	MOV	#<SCREEN+<13.*TILEH*LINEW>+HUD_COL>, HSCR2
 	CALL	HBCNTS
 	MOV	#Lfd3a_p1_base_factory_counts, R5
-	MOV	#<SCREEN+<6.*TILEH*LINEW>+HUD_COL+9.>, HSCR
-	MOV	#<SCREEN+<13.*TILEH*LINEW>+HUD_COL+8.>, HSCR2
+	MOV	#<SCREEN+<6.*TILEH*LINEW>+HUD_COL+11.>, HSCR
+	MOV	#<SCREEN+<13.*TILEH*LINEW>+HUD_COL+10.>, HSCR2
 	CALL	HBCNTS
 	CLR	(R4)+			; the end of the list
 	RETURN
 
-; The day (5 characters, leading spaces) and the time (hours.minutes) next to " DAY:" and "TIME:":
-; white on red, columns 5..9 of the panel, rows 0 and 1 (Lad62_increase_time).
-HBTIME:	MOV	#<SCREEN+HUD_COL+5.>, (R4)+
+; The day (5 characters, leading spaces) and the time (hours.minutes) next to " DAY: " and "TIME: " (both start in column 1):
+; white on black, columns 7..11 of the panel, rows 0 and 1 (Lad62_increase_time).
+HBTIME:	MOV	#<SCREEN+HUD_COL+7.>, (R4)+
 	MOV	#7, (R4)+
-	MOV	#2, (R4)+
+	CLR	(R4)+
 	MOV	Lfd37_days, R0
 	MOV	#HDTAB, R2
 	CLR	R5			; no digits printed yet
@@ -117,9 +119,9 @@ HBTIME:	MOV	#<SCREEN+HUD_COL+5.>, (R4)+
 	ADD	#'0, R0			; the unit digit
 	MOVB	R0, (R4)+
 	CLRB	(R4)+			; the terminator
-	MOV	#<SCREEN+<TILEH*LINEW>+HUD_COL+5.>, (R4)+
+	MOV	#<SCREEN+<TILEH*LINEW>+HUD_COL+7.>, (R4)+
 	MOV	#7, (R4)+
-	MOV	#2, (R4)+
+	CLR	(R4)+
 	CLR	R0
 	BISB	Lfd36_hours, R0
 	CALL	HBDIG2

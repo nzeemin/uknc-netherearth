@@ -8,32 +8,27 @@
 ; With TESTSPEED defined (tools/run_speed_test.py) the speed of the renderer is measured.
 
 GAME:
-	CALL	RUNPPU			; Start PPU procedure, clear the screen
-	MOV	#FRBUF, R0
-	ASR	R0			; word address for the PPU
-	MOV	R0, @#PPUFRB
-	MOV	#Ld800_radar_view1, R0
-	ASR	R0
-	MOV	R0, @#PPURAD		; the radar buffers for the PPU
+	CALL	Lstart_ppu
 La600_start:
 .IF NDF NOMENU
 	CALL	Lc100_title_screen	; the main menu (the tests skip it: NOMENU)
 	TST	R0
 	BPL	5$
 	JMP	Lgame_exit		; STOP in the menu: exit
-5$:	PPUCMW	#CMDCLS			; clear the screen of the menu
-	CALL	Lnew_game
+5$:	CALL	Lnew_game
 .ENDC
 .IF DF TESTNEW
 	CALL	Lnew_game
 	CALL	TESTNW
 .ENDC
-	CALL	DRHUD			; the right panel (status), drawn once
-	PPUFRM	FRMBLK			; the frame around the game area, drawn by the PPU
-	CALL	DRPORT			; render
-	MOVB	#1, Lfd52_update_radar_buffer_signal
-	CALL	Lb029_update_radar_view
-	PPUCMW	#CMDGAME		; the PPU shows the game area and the radar
+.IF DF TESTCONS
+	CALL	Lnew_game		; the player above the "H" of his warbase: the construction screen opens at once
+	MOV	#22., Lfd0e_player_x
+	MOVB	#5, Lfd0d_player_y
+	MOVB	#16., Lfd10_player_altitude
+	CLRB	Lfd30_player_elevate_timer
+.ENDC
+	CALL	Ld0ca_draw_in_game_screen
 .IF DF TESTSPEED
 	CALL	BENCH
 .ENDC
@@ -51,18 +46,49 @@ La69a_game_loop:
 	; TODO: CALL Lb0ca_update_robots_bullets_and_ai
 	CALL	DRPORT			; Lccbd_redraw_game_area
 	CALL	Lad62_increase_time
-	; TODO: landing on a robot / a warbase (La6c8..)
+; The player lands on something
+	CALL	Lcca0_compute_player_map_ptr
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BEQ	La70d_game_loop_continue
+	CALL	Lcdd8_get_robot_at_ptr
+	BEQ	La70d_game_loop_continue		; a robot: TODO landing on the robot (La720)
+	CALL	Lcdf5_find_decoration_with_ptr
+	BNE	La70d_game_loop_continue		; not on top of any ownable building
+	TSTB	DECOR_STRUCT_TYPE(R5)
+	BNE	La70d_game_loop_continue		; not on top of the "H" of a warbase
+	CMPB	Lfd10_player_altitude, #15.
+	BNE	La70d_game_loop_continue		; not at the right height
+	MOV	(R5), R3
+	ADD	#4000, R3				; 4 rows down: the warbase
+; bit 6 in a 2x2 area around the base of the warbase: something (a robot) is in the way
+	MOVB	Ldd00_map(R3), R0
+	ADD	#1000, R3
+	BISB	Ldd00_map(R3), R0
+	DEC	R3
+	BISB	Ldd00_map(R3), R0
+	INC	R3
+	INC	R3
+	BISB	Ldd00_map(R3), R0
+	BIT	#MAPB_OCCUPIED, R0
+	BNE	La70d_game_loop_continue
+	CALL	Lc849_construction_if_possible
+La70d_game_loop_continue:
 	BIT	#PKEYST, @#PPUKEY	; STOP key?
 	BEQ	La69a_game_loop
 .IF NDF NOMENU
-	PPUCMW	#CMDMENU		; for now: back to the main menu (later: the pause menu)
-	JMP	La600_start
+	CALL	Lpause_menu		; STOP: the pause menu
+	TST	R0
+	BEQ	La69a_game_loop		; CONTINUE
+	JMP	La600_start		; ABORT GAME: the main menu
 .ENDC
 ;
-; Exit: stop PPU, show measurements, wait for a key
+; Exit: stop the PPU program, then (normal build) restore the palette and the screen and leave the
+; program (FNCORE); the test builds show the measurements and wait for a key
 Lgame_exit:
 	CALL	STOPPU
-	CALL	STPALD
+.IF NDF NOMENU
+	JMP	FNCORE
+.IFF
 	MOV	#EXITSC, R1
 	CALL	PRINT
 .IF DF TESTSPEED
@@ -132,6 +158,7 @@ Lgame_exit:
 	BPL	.-4
 	MOV	OSTACK, SP
 	EMT	350			; .EXIT
+.ENDC
 
 ; Parameter blocks for the PPU print command: screen address, ink, paper index, string
 FRMBLK:	.WORD	SCREEN+<<VIEW_ROW-1>*TILEH*LINEW>+<VIEW_COL-1>, VIEW_W+2, <VIEW_H/TILEH>+2, 0, 7
@@ -591,6 +618,71 @@ TESTNW:	MOV	#Ldd00_map, R0
 .ENDC
 
 ;------------------------------------------------------------------------------
+; The game screen: clears the screen, draws the panel, the frame, the first frame of the game area and
+; the radar, and switches the PPU to the game mode. Also after the screens that replace it.
+Ld0ca_draw_in_game_screen:
+	PPUCMW	#CMDCLS
+	CALL	DRHUD			; the right panel (status)
+	PPUFRM	FRMBLK			; the frame around the game area, drawn by the PPU
+	CALL	DRPORT			; render
+	MOVB	#1, Lfd52_update_radar_buffer_signal
+	CALL	Lb029_update_radar_view
+	PPUCMW	#CMDGAME		; the PPU shows the game area and the radar
+	RETURN
+
+;------------------------------------------------------------------------------
+; The robot construction screen (the player is on top of the "H" of his warbase)
+
+CSKEYO:	.WORD	0			; the previous state of the keys
+
+CSTEXT:	.WORD	SCREEN+<4.*TILEH*LINEW>+17., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/ROBOT/
+	.EVEN
+	.WORD	SCREEN+<6.*TILEH*LINEW>+14., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/CONSTRUCTION/
+	.EVEN
+	.WORD	SCREEN+<12.*TILEH*LINEW>+5., 5, 0
+	.ASCIZ	/THE SCREEN IS NOT WRITTEN YET/
+	.EVEN
+	.WORD	SCREEN+<22.*TILEH*LINEW>+14., 6, 0
+	.BYTE	4, '2
+	.ASCIZ	/> EXIT MENU/
+	.EVEN
+	.WORD	0
+
+; Checks if the player has less than the maximum number of robots, and if so, opens the construction
+; screen with R5 pointing to a free robot structure.
+Lc849_construction_if_possible:
+	MOV	#Lda00_player1_robots, R5
+	MOV	#MAX_ROBOTS_PER_PLAYER, R1
+10$:	CMP	(R5), #NOSLOT
+	BEQ	Lc85d_robot_construction
+	ADD	#ROBOT_STRUCT_SIZE, R5
+	SOB	R1, 10$
+	RETURN
+
+; The robot construction screen. R5 = the free robot structure. A stub for now: it shows the title and
+; waits for fire. TODO: the pieces, the resources, the preview, the new robot.
+Lc85d_robot_construction:
+	PPUCMW	#CMDMENU		; the game area and the radar are not drawn
+	PPUCMW	#CMDCLS
+	PPUSTS	CSTEXT
+	MOV	@#PPUKEY, CSKEYO	; the keys held at the entry do not count
+10$:	MOV	@#PPUKEY, R0
+	MOV	R0, R1
+	BIC	CSKEYO, R1
+	MOV	R0, CSKEYO
+	BIT	#PKEYFR, R1
+	BEQ	10$
+; the exit (Lcb8e_construction_screen_exit)
+	MOVB	#5, Lfd30_player_elevate_timer	; the player levitates a bit after exiting
+	CALL	Ld0ca_draw_in_game_screen
+	MOV	@#PPUTCK, CYCT0		; the time spent in the screen is not a part of the cycle
+	RETURN
+
+;------------------------------------------------------------------------------
 ; The main menu (the PPU is in the menu mode: the screen is free for the texts)
 
 ; A string of the menu, as for the PPU command CMDSTR: row, column, ink, paper, text
@@ -622,11 +714,64 @@ MNTITLE:
 	.EVEN
 	.WORD	0
 
-; The items, left aligned. The selected one has the character ">" before it, is yellow and double height,
-; the other one is white and normal height. Lc106_title_redraw_options changes the ink word of a block
-; (MNOPTn+2), the scale character (MNSCn) and the first character of the text (MNCHn). The two blocks
-; before them erase the old items (a double height item takes two rows of the screen).
+; The items of a menu: left aligned. The selected one has the character ">" before it, is yellow and
+; double height, the others are white and normal height. Lmenu_select changes the ink word, the scale
+; character and the first character of the text of the item blocks (the offsets MNB_INK, MNB_SCALE,
+; MNB_CHAR in the block). The blocks before the items erase the old ones (a double height item takes two
+; rows of the screen).
+MNB_INK = 2
+MNB_SCALE = 7
+MNB_CHAR = 8.
+
+; The main menu: four items
 MNOPTS:
+	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+	.WORD	SCREEN+<19.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+	.WORD	SCREEN+<22.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+	.WORD	SCREEN+<25.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+MNOPT1:	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 6, 0
+	.BYTE	4, '2
+	.ASCIZ	/> START GAME/
+	.EVEN
+MNOPT2:	.WORD	SCREEN+<19.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '1
+	.ASCIZ	/  PALETTE/
+	.EVEN
+MNOPT3:	.WORD	SCREEN+<22.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '1
+	.ASCIZ	/  LOAD SAVED GAME/
+	.EVEN
+MNOPT4:	.WORD	SCREEN+<25.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '1
+	.ASCIZ	/  EXIT/
+	.EVEN
+	.WORD	0
+MNTAB:	.WORD	MNOPT1, MNOPT2, MNOPT3, MNOPT4
+
+; The pause menu: the title and three items
+PMTITLE:
+	.WORD	SCREEN+<8.*TILEH*LINEW>+14., 5, 0
+	.BYTE	4, '2
+	.ASCIZ	/GAME PAUSED/
+	.EVEN
+	.WORD	0
+PMOPTS:
+	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
 	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
 	.BYTE	4, '2
 	.ASCIZ	/                 /
@@ -635,41 +780,54 @@ MNOPTS:
 	.BYTE	4, '2
 	.ASCIZ	/                 /
 	.EVEN
-MNOPT1:	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 6, 0
-	.BYTE	4
-MNSC1:	.BYTE	'2
-MNCH1:	.ASCIZ	/> START GAME/
+PMOPT1:	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 6, 0
+	.BYTE	4, '2
+	.ASCIZ	/> CONTINUE/
 	.EVEN
-MNOPT2:	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4
-MNSC2:	.BYTE	'1
-MNCH2:	.ASCIZ	/  LOAD SAVED GAME/
+PMOPT2:	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '1
+	.ASCIZ	/  SAVE GAME/
+	.EVEN
+PMOPT3:	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '1
+	.ASCIZ	/  ABORT GAME/
 	.EVEN
 	.WORD	0
+PMTAB:	.WORD	PMOPT1, PMOPT2, PMOPT3
 
-; The main menu: arrows up/down select, fire (Shift) chooses. Returns R0 = 0 to start the game,
-; -1 to exit (STOP). TODO: LOAD SAVED GAME (needs the disk), the music, the changing color of the title.
-Lc100_title_screen:
-	PPUCMW	#CMDCLS
-	PPUSTS	MNTITLE
-	CLR	MNSEL
+MNLST:	.WORD	0			; Lmenu_select: the list of the strings of the items
+MNTAB1:	.WORD	0			; the table of the item blocks
+MNCNT:	.WORD	0			; the number of the items
+
+; Selects an item of a menu: arrows up/down select (MNSEL = the selected item, set by the caller), fire
+; (Shift) chooses, STOP leaves. R0 = the list of the strings of the items (PPU command CMDSTS),
+; R1 = the table of the addresses of the item blocks in it, R2 = the number of the items.
+; Returns R0 = the chosen item (0..) or -1 (STOP).
+Lmenu_select:
+	MOV	R0, MNLST
+	MOV	R1, MNTAB1
+	MOV	R2, MNCNT
 	MOV	@#PPUKEY, MNKEYO	; the keys held at the entry do not count
-Lc106_title_redraw_options:
-	MOV	#6, MNOPT1+2			; the first item is selected: yellow, double height, with ">"
-	MOV	#7, MNOPT2+2			; the other item: white, normal height
-	MOVB	#'2, MNSC1
-	MOVB	#'1, MNSC2
-	MOVB	#'>, MNCH1
-	MOVB	#' , MNCH2
-	TST	MNSEL
-	BEQ	10$
-	MOV	#7, MNOPT1+2
-	MOV	#6, MNOPT2+2
-	MOVB	#'1, MNSC1
-	MOVB	#'2, MNSC2
-	MOVB	#' , MNCH1
-	MOVB	#'>, MNCH2
-10$:	PPUSTS	MNOPTS
+Lc106_menu_redraw_options:
+	MOV	MNTAB1, R3
+	CLR	R4
+10$:	MOV	(R3)+, R5
+	CMP	R4, MNSEL
+	BEQ	20$
+	MOV	#7, MNB_INK(R5)		; an item: white, normal height
+	MOVB	#'1, MNB_SCALE(R5)
+	MOVB	#' , MNB_CHAR(R5)
+	BR	30$
+20$:	MOV	#6, MNB_INK(R5)		; the selected item: yellow, double height, with ">"
+	MOVB	#'2, MNB_SCALE(R5)
+	MOVB	#'>, MNB_CHAR(R5)
+30$:	INC	R4
+	CMP	R4, MNCNT
+	BLO	10$
+40$:	TST	@#PPUCOM		; wait for the PPU to be free (it may still read PPUDAT)
+	BNE	40$
+	MOV	MNLST, @#PPUDAT
+	PPUCMW	#CMDSTS
 Lc1a1_wait_for_key_press_loop:
 	MOV	@#PPUKEY, R0
 	MOV	R0, R1
@@ -678,21 +836,85 @@ Lc1a1_wait_for_key_press_loop:
 	BIT	#PKEYST, R1
 	BNE	Lc100_exit
 	BIT	#PKEYUP, R1
-	BEQ	20$
-	CLR	MNSEL
-	BR	Lc106_title_redraw_options
-20$:	BIT	#PKEYDN, R1
-	BEQ	30$
-	MOV	#1, MNSEL
-	BR	Lc106_title_redraw_options
-30$:	BIT	#PKEYFR, R1
-	BEQ	Lc1a1_wait_for_key_press_loop
+	BEQ	50$
 	TST	MNSEL
-	BNE	Lc1a1_wait_for_key_press_loop	; LOAD SAVED GAME is not available yet
-	CLR	R0
+	BEQ	Lc1a1_wait_for_key_press_loop
+	DEC	MNSEL
+	BR	Lc106_menu_redraw_options
+50$:	BIT	#PKEYDN, R1
+	BEQ	60$
+	MOV	MNSEL, R0
+	INC	R0
+	CMP	R0, MNCNT
+	BHIS	Lc1a1_wait_for_key_press_loop
+	MOV	R0, MNSEL
+	BR	Lc106_menu_redraw_options
+60$:	BIT	#PKEYFR, R1
+	BEQ	Lc1a1_wait_for_key_press_loop
+	MOV	MNSEL, R0
 	RETURN
 Lc100_exit:
 	MOV	#-1, R0
+	RETURN
+
+; The main menu: arrows up/down select, fire (Shift) chooses. Returns R0 = 0 to start the game,
+; -1 to exit the program (EXIT, or STOP). TODO: PALETTE, LOAD SAVED GAME (needs the disk), the music, the changing color of the title.
+Lc100_title_screen:
+	CLR	MNSEL
+Lc100_title_redraw:
+	PPUCMW	#CMDCLS
+	PPUSTS	MNTITLE
+10$:	MOV	#MNOPTS, R0
+	MOV	#MNTAB, R1
+	MOV	#4, R2
+	CALL	Lmenu_select
+	TST	R0
+	BMI	20$			; STOP
+	BEQ	30$			; START GAME
+	CMP	R0, #1
+	BNE	15$
+	INC	@#PALNO			; PALETTE: the next palette (the PPU keeps both)
+	MOV	@#PALNO, @#PPUDAT
+	PPUCMW	#CMDPAL
+	BR	10$
+15$:	CMP	R0, #3
+	BNE	10$			; LOAD SAVED GAME: not available yet
+	MOV	#-1, R0			; EXIT
+20$:
+30$:	RETURN
+
+; Starts the PPU program (the menu mode, the screen is cleared) and tells it where the frame buffer and the
+; radar buffers are
+Lstart_ppu:
+	CALL	RUNPPU
+	MOV	#FRBUF, R0
+	ASR	R0			; word address for the PPU
+	MOV	R0, @#PPUFRB
+	MOV	#Ld800_radar_view1, R0
+	ASR	R0
+	MOV	R0, @#PPURAD		; the radar buffers for the PPU
+	RETURN
+
+; The pause menu (STOP in the game): CONTINUE returns to the game, SAVE GAME does nothing yet, ABORT GAME
+; goes to the main menu (no confirmation). STOP works as CONTINUE too.
+; Returns R0 = 0 to continue the game (the game screen is drawn again), 1 to abort it.
+Lpause_menu:
+	PPUCMW	#CMDMENU		; the game area and the radar are not drawn
+	PPUCMW	#CMDCLS
+	PPUSTS	PMTITLE
+	CLR	MNSEL
+10$:	MOV	#PMOPTS, R0
+	MOV	#PMTAB, R1
+	MOV	#3, R2
+	CALL	Lmenu_select
+	CMP	R0, #1
+	BEQ	10$			; SAVE GAME: TODO (needs the disk)
+	BHI	30$			; ABORT GAME
+	CALL	Ld0ca_draw_in_game_screen
+	MOV	@#PPUTCK, CYCT0		; the time spent in the menu is not a part of the cycle
+	CLR	R0
+	RETURN
+30$:	MOV	#1, R0
 	RETURN
 
 ;------------------------------------------------------------------------------

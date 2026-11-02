@@ -92,6 +92,7 @@ CMDSTS =: 4		; Print a list of strings: PPUDAT = CPU address of the list (even):
 CMDGAME =: 5		; Switch the PPU to the game mode: the game area and the radar are drawn
 CMDMENU =: 6		; Switch the PPU to the menu mode: the game area and the radar are not drawn
 CMDCLS =: 7		; Clear the screen
+CMDPAL =: 10		; Set the palette of the screen: PPUDAT = the palette number (0, 1; the PPU keeps both palettes)
 CMDFRM =: 3		; Draw the frame: PPUDAT = CPU address of a block (even):
 	;   .WORD screen address of the top left tile, width (tiles), height (tile rows), ink color, paper color index
 
@@ -104,7 +105,6 @@ START::
 	MOV	SP, OSTACK		; Save initial SP address
 	MOV	#STACK+<20*2>, SP	; Own stack, keep clear of the mailbox words
 ;
-	CALL	STPAL			; Set up the game palette
 	MOV	#GAMESC, R1		; String for game screen preparing
 	CALL	PRINT
 	CALL	PAUSE			; wait while screen updates
@@ -113,8 +113,7 @@ START::
 ;
 OSTACK:	.WORD	01000			; Saved initial SP
 
-FNCORE:	CALL	STPALD			; Select default palette
-	MOV	OSTACK, SP
+FNCORE:	MOV	OSTACK, SP
 	MOV	#EXITSC, R1		; String for screen cleanup before the exit
 	CALL	PRINT
 	EMT	350			; .EXIT
@@ -279,6 +278,10 @@ PPSTA:
 	CLR	VROW
 	CLR	VCPUA
 	MOV	#VIEW_SCR, VSCRA
+	MOV	PC, R0			; the palette 0
+	ADD	#PALTAB-., R0
+	MOV	(R0)+, @#DLPAL
+	MOV	(R0), @#DLPAL+2
 	CALL	PCLSCR			; Clear screen
 PDONE:
 	MTPS	#0
@@ -307,6 +310,7 @@ PMAIN:	TST	PMODE
 	JMP	PGAME			; 5 - game mode
 	JMP	PMENU			; 6 - menu mode
 	JMP	PCLS			; 7 - clear the screen
+	JMP	PPAL			; 8 - set the palette
 	;TODO commands: fill attributes, blit, nuke effect, music
 ; Exit command
 PEXIT:	MTPS	#200
@@ -323,6 +327,10 @@ PEXIT:	MTPS	#200
 	MOV	(R0)+, (R1)+
 	SOB	R3, .-2
 	MOV	BKP054, @#177054
+	MOV	PC, R0			; the default palette
+	ADD	#PALDEF-., R0
+	MOV	(R0)+, @#DLPAL
+	MOV	(R0), @#DLPAL+2
 ;
 	CALL	PCLSCR			; Clear screen
 ;
@@ -567,6 +575,23 @@ PGAME:	MOV	#1, PMODE
 PMENU:	CLR	PMODE
 	JMP	PDONE
 PCLS:	CALL	PCLSCR
+	JMP	PDONE
+
+; Command: set the palette. PPUDAT = the palette number (only bit 0 counts). The palette is the 4-word tag
+; of the display list at DLPAL (the palette of the main part of the screen, line 30), 8 entries of 4 bits.
+DLPAL = 002470
+PPAL:	MOV	#177010, R4		; mem index
+	MOV	#177014, R5		; mem data
+	MOV	#<PPUDAT/2>, (R4)
+	MOV	(R5), R0
+	BIC	#177776, R0		; 0..1
+	ASL	R0
+	ASL	R0			; x4
+	MOV	PC, R1
+	ADD	#PALTAB-., R1
+	ADD	R0, R1
+	MOV	(R1)+, @#DLPAL
+	MOV	(R1), @#DLPAL+2
 	JMP	PDONE
 
 ; Command: draw the frame around the game area: 1 pixel black line, 6 pixels of paper, 1 pixel black
@@ -843,6 +868,12 @@ PSCALE:	.WORD	1			; PPRINT: height scale of the characters
 PCNT:	.WORD	0			; DRCHAR: repetition counter
 PLINES:	.WORD	0			; DRCHAR: lines of the character left
 TMPBUF:	.BLKW	TILEH			; Temp buffer for one cell
+; Palettes: color indexes as the bits GRB (1 blue, 2 red, 4 green): black / blue / red / magenta / green /
+; cyan / yellow / white. Entry i is 4 bits (YRGB), the identity of the other bits is 1000+i.
+PALTAB:	.WORD	^B1011101010011000, ^B1111111011011100	; palette 0
+	.WORD	^B1101110010011000, ^B1111111010111010	; palette 1: red and green exchanged (for the machines
+							;   where these two colors are swapped)
+PALDEF:	.WORD	^B1011101010011000, ^B1111111011011100	; the default palette of the system
 BKP054:	.WORD	0			; Saved 177054
 BKP:	.BLKW	400			; 0-1000 addrs backup
 
@@ -850,53 +881,7 @@ PPEND:
 ; End of PPU code block
 ;==============================================================================
 
-PALNO:	.WORD	0		; Current palette number
-; Palette to set up in the PPU memory
-;		 |____....____....|
-PALETD:	.WORD	^B1011101010011000	; Default UKNC palette
-	.WORD	^B1111111011011100	;
-PALETT:	.WORD	^B1011101010011000	; Game palette 0 - for GRB
-	.WORD	^B1111111011011100	;   black / blue / red / green
-	.WORD	^B1010100111010000	; Game palette 1 - for RGB
-	.WORD	^B1010101011011100	;   black / blue / green / red
-	.WORD	^B1011111110011001	; Game palette 2
-	.WORD	^B1111111111011100	;   black on blue
-	.WORD	^B0100000001101111	; Game palette 3
-	.WORD	^B0000001100100001	;   black on white
-
-; Parameters block used to exchange with PPU using Channel 2
-PPBLCK:	.BYTE	0		; This byte will have error code or zero
-PPBCMD:	.BYTE	20		; Command (01-get memory, 02-free memory 10-read, 20-write, 30-start)
-	.WORD	32		; Device - PPU
-PPBAPP:	.WORD	002470		; Address in PPU RAM - two words for the new palette
-PPBACP:	.WORD	PALETT		; Address in PPU RAM - address for the palette
-	.WORD	2		; Block length in bytes
-PPBADR:	.WORD	PPBLCK		; Start address of the parameters block
-	.WORD	401		; Stop element (used in the exchange)
-
-; Restore the default palette
-STPALD:
-	MOV	#PALETD, R0
-	BR	STPAL1
-; Set up the palette
-STPAL:	MOV	@#PALNO, R0
-	BIC	#177774, R0		; 0..3
-	ASL	R0
-	ASL	R0			; x4
-	ADD	#PALETT, R0
-STPAL1:	MOV	R0, @#PPBACP
-; Procedure used to send parameters block for PPU using Channel 2
-PPSEND:	MOV	#PPBADR, R0
-	MOV	#5, R1
-	MTPS	#200
-	BR	1$
-2$:	MOVB	(R0)+, @#176676
-1$:	TSTB	@#176674
-	BPL	1$
-	SOB	R1, 2$
-	MTPS	#0
-	RETURN
-
+PALNO:	.WORD	0		; Current palette number (CMDPAL); the palettes are in the PPU code (PALTAB)
 ;------------------------------------------------------------------------------
 
 STARTC::
