@@ -37,12 +37,12 @@ SCRIPT = '\n'.join([
     'cf50',
     'k ENTER',
     'cf600',
-    'cf200',                    # the program is running
+    'cf600',                    # the program is running: the start (the comparison with the original, the checks) takes about 20 s
     'screen shot.png',
     'kd STOP',                  # the program exits and prints the result
-    'cf10',
+    'cf30',                     # the game loop looks at the keys once per cycle (0.2 s): hold STOP longer
     'ku STOP',
-    'cf150',
+    'cf400',                    # the PPU needs up to 25 ticks for a pass, then the result is printed
     'screentext',
     'q',
 ]) + '\n'

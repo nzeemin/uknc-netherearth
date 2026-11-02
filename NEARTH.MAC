@@ -1,6 +1,10 @@
 	.TITLE	NEARTH
 	.ASECT
 
+.IF DF TESTFONT
+LANGRU = 1				; the font test shows the Cyrillic font
+.ENDC
+
 ; Nether Earth (ZX Spectrum, 1986) port for Elektronika MS-0511 UKNC.
 ; This file: CPU/PPU plumbing, PPU program, palette, console helpers.
 ; Game logic is in NECORE.MAC (included at the end).
@@ -21,19 +25,25 @@
 	TST	@#PPUCOM
 	BNE	.-4
 .ENDM
+;  The PPU addresses the CPU memory by words. MOVHW puts the word address of a label of the CPU memory
+; (the address / 2, a logical shift: MACRO11 divides signed, an address at 100000 and above would keep the
+; sign) to the destination, so no shift is needed at run time, neither by the CPU nor by the PPU.
+.MACRO	MOVHW	ADDR, DST
+	MOV	#<<<ADDR&77777>/2>+<<<ADDR&100000>/100000>*40000>>, DST
+.ENDM
 ; Print string by PPU and wait for completion: BLK = address of the string block (see CMDSTR)
 .MACRO	PPUSTR	BLK
-	MOV	#BLK, @#PPUDAT
+	MOVHW	BLK, @#PPUDAT
 	PPUCMW	#CMDSTR
 .ENDM
 ; Draw the frame by PPU and wait for completion: BLK = address of the frame block (see CMDFRM)
 ; Print a list of strings by PPU and wait for completion
 .MACRO	PPUSTS	LST
-	MOV	#LST, @#PPUDAT
+	MOVHW	LST, @#PPUDAT
 	PPUCMW	#CMDSTS
 .ENDM
 .MACRO	PPUFRM	BLK
-	MOV	#BLK, @#PPUDAT
+	MOVHW	BLK, @#PPUDAT
 	PPUCMW	#CMDFRM
 .ENDM
 
@@ -85,15 +95,15 @@ PPUTCK = 1000 - 16	; PPU: count of 50Hz ticks (written on exit)
 PPURAD = 1000 - 20	; radar buffers address in CPU memory (CPU sets, PPU reads), 0 = no radar
 
 ; PPU commands (PPUCOM); PPU clears PPUCOM when the command is done
-CMDSTR =: 2		; Print string: PPUDAT = CPU address of a block (even):
+CMDSTR =: 2		; Print string: PPUDAT = CPU word address of a block (MOVHW):
 	;   .WORD screen address, ink color, paper color index; then string bytes, zero terminated
-CMDSTS =: 4		; Print a list of strings: PPUDAT = CPU address of the list (even): blocks of CMDSTR
+CMDSTS =: 4		; Print a list of strings: PPUDAT = CPU word address of the list (MOVHW): blocks of CMDSTR
 			; one after another, the list ends with a zero word
 CMDGAME =: 5		; Switch the PPU to the game mode: the game area and the radar are drawn
 CMDMENU =: 6		; Switch the PPU to the menu mode: the game area and the radar are not drawn
 CMDCLS =: 7		; Clear the screen
 CMDPAL =: 10		; Set the palette of the screen: PPUDAT = the palette number (0, 1; the PPU keeps both palettes)
-CMDFRM =: 3		; Draw the frame: PPUDAT = CPU address of a block (even):
+CMDFRM =: 3		; Draw the frame: PPUDAT = CPU word address of a block (MOVHW):
 	;   .WORD screen address of the top left tile, width (tiles), height (tile rows), ink color, paper color index
 
 ;------------------------------------------------------------------------------
@@ -474,8 +484,7 @@ PPRINT:
 	MOV	#177014, R5		; mem data
 	MOV	#177024, R3		; pix data
 	MOV	#<PPUDAT/2>, (R4)
-	MOV	(R5), R0		; block address in CPU memory
-	ASR	R0			; word address
+	MOV	(R5), R0		; word address of the block in CPU memory
 	CALL	PSTRB
 	JMP	PDONE
 
@@ -486,8 +495,7 @@ PPRSTS:
 	MOV	#177014, R5		; mem data
 	MOV	#177024, R3		; pix data
 	MOV	#<PPUDAT/2>, (R4)
-	MOV	(R5), R0		; list address in CPU memory
-	ASR	R0			; word address
+	MOV	(R5), R0		; word address of the list in CPU memory
 10$:	MOV	R0, (R4)
 	TST	(R5)			; screen address = 0: the end
 	BEQ	90$
@@ -545,7 +553,20 @@ PGETC:	TST	PHALF
 
 ; Draw a character: R2 = character code, R1 = screen address (advanced by 1 column)
 ; R3 = 177024, R4 = 177010
-DRCHAR:	SUB	#FONTFC, R2
+DRCHAR:
+.IF DF LANGRU
+	CMP	R2, #FONTRC		; Cyrillic (KOI8-R codes 192..255)
+	BLO	5$
+	SUB	#FONTRC, R2
+	ASL	R2
+	ASL	R2
+	ASL	R2			; * 8.
+	ADD	PC, R2
+	ADD	#FONTR-., R2
+	BR	25$
+5$:
+.ENDC
+	SUB	#FONTFC, R2
 	BLT	10$
 	CMP	R2, #FONTCN
 	BLO	20$
@@ -555,7 +576,7 @@ DRCHAR:	SUB	#FONTFC, R2
 	ASL	R2			; * 8.
 	ADD	PC, R2
 	ADD	#FONT-., R2
-	MOV	R1, (R4)
+25$:	MOV	R1, (R4)
 	MOV	#TILEH, PLINES
 30$:	CLR	R0
 	BISB	(R2)+, R0
@@ -603,8 +624,7 @@ PFRAME:
 	MOV	#177014, R5		; mem data
 	MOV	#177024, R3		; pix data
 	MOV	#<PPUDAT/2>, (R4)
-	MOV	(R5), R0		; block address in CPU memory
-	ASR	R0			; word address
+	MOV	(R5), R0		; word address of the block in CPU memory
 	MOV	R0, (R4)
 	MOV	(R5), R1		; R1 = screen address
 	INC	(R4)

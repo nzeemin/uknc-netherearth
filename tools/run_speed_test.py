@@ -22,7 +22,7 @@ N = 20
 SCRIPT = '\n'.join([
     'disk1 attach test.dsk', 'reset', 'cf200', 'k 1', 'cf50', 'k ENTER', 'cf600',
     'cf%d' % 3000,                  # the benchmark runs (about a minute of emulated time)
-    'kd STOP', 'cf10', 'ku STOP', 'cf150',
+    'kd STOP', 'cf30', 'ku STOP', 'cf400',
     'screentext', 'q',
 ]) + '\n'
 

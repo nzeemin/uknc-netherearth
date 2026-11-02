@@ -1,0 +1,66 @@
+; The Russian texts of NEMSGS.MAC (tools/conv_lang.py): "English" = "Russian"
+; The spaces inside the quotes count. The font has the capitals only (no Yo). The texts that are not
+; here stay English. The width of the erase blocks (MNOPTS) limits the length of an item.
+; The sections [NAME] are the screens (";@ NAME" in NEMSGS.MAC): the same English text can have different
+; translations in them. The lines before the first section are common to all the screens.
+
+[MAIN MENU]
+"> START GAME"       = "> НАЧАТЬ ИГРУ"
+"  PALETTE"          = "  ПАЛИТРА"
+"  LOAD SAVED GAME"  = "  ЗАГРУЗИТЬ ИГРУ"
+"  EXIT"             = "  ВЫХОД"
+
+[GAME SCREEN]
+" DAY: "          = "ДЕНЬ: "
+"TIME: "          = " ЧАС: "
+"   STATUS"       = "   СТАТУС"
+"INSIG  HUMAN"    = "ИНОП.   ЛЮДИ"
+"WARBASES"        = "  БАЗЫ  "
+"ELECTR'S"        = " ЭЛЕКТР."
+"NUCLEAR"         = "АТ.БОМБЫ"
+"PHASERS"         = " ФАЗЕРЫ "
+"MISSILES"        = " РАКЕТЫ "
+" CANNON"         = "  ПУШКИ "
+"CHASSIS"         = "  ШАССИ "
+" ROBOTS"         = " РОБОТЫ "
+"RESOURCES"       = "РЕСУРСЫ "
+"GENERAL "        = "ОБЩИЕ   "
+"ELECTR' "        = "ЭЛЕКТР. "
+"NUCLEAR "        = "АТ.БОМБЫ"
+"PHASERS "        = "ФАЗЕРЫ  "
+"MISSILE "        = "РАКЕТЫ  "
+"CANNON "         = "ПУШКИ   "
+"CHASSIS "        = "ШАССИ   "
+"RADAR:"          = "РАДАР:"
+
+[PAUSE MENU]
+"GAME PAUSED"     = "   ПАУЗА"
+"> CONTINUE"      = "> ПРОДОЛЖИТЬ"
+"  SAVE GAME"     = "  СОХРАНИТЬ ИГРУ"
+"  ABORT GAME"    = "  ПРЕРВАТЬ ИГРУ"
+
+[ROBOT CONSTRUCTION]
+"ROBOT"           = "СБОРКА"
+"CONSTRUCTION"    = "РОБОТОВ"
+"-- RESOURCES --" = "-- РЕСУРСОВ --"
+"-- AVAILABLE --" = "-- ДОСТУПНО --"
+" GENERAL"        = "   ОБЩИЕ"
+"ELECTRONICS"     = "ЭЛЕКТРОНИКА"
+" NUCLEAR"        = "АТ.БОМБЫ"
+" PHASERS"        = "  ФАЗЕРЫ"
+"MISSILES"        = "  РАКЕТЫ"
+"  CANNON"        = "   ПУШКИ"
+" CHASSIS"        = "   ШАССИ"
+"   TOTAL"        = "   ВСЕГО"
+"> EXIT MENU"     = "> ВЫХОД"
+"  START ROBOT"   = "  ВЫПУСК РОБОТА"
+
+[ROBOT CONSTRUCTION PIECES]
+"ELECTRONICS"     = "ЭЛЕКТРОНИКА"
+"NUCLEAR"         = "АТ.БОМБЫ"
+"PHASERS"         = "ФАЗЕРЫ"
+"MISSILES"        = "РАКЕТЫ"
+"CANNON"          = "ПУШКИ"
+"ANTI-GRAV"       = "АНТИГРАВЫ"
+"TRACKS"          = "ГУСЕНИЦЫ"
+"BIPOD"           = "ДВУНОГИ"

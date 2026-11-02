@@ -9,6 +9,10 @@
 
 GAME:
 	CALL	Lstart_ppu
+.IF DF TESTFONT
+	CALL	TESTFN			; shows the fonts, waits for STOP, then exits
+	JMP	Lgame_exit
+.ENDC
 La600_start:
 .IF NDF NOMENU
 	CALL	Lc100_title_screen	; the main menu (the tests skip it: NOMENU)
@@ -46,7 +50,15 @@ La69a_game_loop:
 	; TODO: CALL Lb0ca_update_robots_bullets_and_ai
 	CALL	DRPORT			; Lccbd_redraw_game_area
 	CALL	Lad62_increase_time
-; The player lands on something
+; The player lands on something (the tests with NOMENU have no landing, except TESTCONS)
+.IF NDF NOMENU
+LANDING = 1
+.IFF
+.IF DF TESTCONS
+LANDING = 1
+.ENDC
+.ENDC
+.IF DF LANDING
 	CALL	Lcca0_compute_player_map_ptr
 	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
 	BEQ	La70d_game_loop_continue
@@ -72,6 +84,7 @@ La69a_game_loop:
 	BIT	#MAPB_OCCUPIED, R0
 	BNE	La70d_game_loop_continue
 	CALL	Lc849_construction_if_possible
+.ENDC
 La70d_game_loop_continue:
 	BIT	#PKEYST, @#PPUKEY	; STOP key?
 	BEQ	La69a_game_loop
@@ -618,6 +631,31 @@ TESTNW:	MOV	#Ldd00_map, R0
 .ENDC
 
 ;------------------------------------------------------------------------------
+.IF DF TESTFONT
+; The font test (build with -s "TESTFONT=1" and NOMENU): shows the Latin font and the Cyrillic font
+; (the capitals in the order of KOI8-R: codes 224..255) and waits for STOP.
+TESTFN:	PPUCMW	#CMDCLS
+	MOVHW	FNTLST, @#PPUDAT
+	PPUCMW	#CMDSTS
+10$:	BIT	#PKEYST, @#PPUKEY
+	BEQ	10$
+	RETURN
+
+FNTLST:	.WORD	SCREEN+<3.*TILEH*LINEW>+4., 7, 0
+	.ASCIZ	/ !"#$%&'()*+,-./0123456789:;<=>?/
+	.EVEN
+	.WORD	SCREEN+<5.*TILEH*LINEW>+4., 7, 0
+	.ASCIZ	/@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_/
+	.EVEN
+	.WORD	SCREEN+<7.*TILEH*LINEW>+4., 6, 0		; KOI8-R 224..255: YU A BE TSE DE E EF GE ...
+	.BYTE	340,341,342,343,344,345,346,347,350,351,352,353,354,355,356,357
+	.BYTE	360,361,362,363,364,365,366,367,370,371,372,373,374,375,376,377,0
+	.EVEN
+	.WORD	0
+
+.ENDC
+
+;------------------------------------------------------------------------------
 ; The game screen: clears the screen, draws the panel, the frame, the first frame of the game area and
 ; the radar, and switches the PPU to the game mode. Also after the screens that replace it.
 Ld0ca_draw_in_game_screen:
@@ -633,24 +671,65 @@ Ld0ca_draw_in_game_screen:
 ;------------------------------------------------------------------------------
 ; The robot construction screen (the player is on top of the "H" of his warbase)
 
-CSKEYO:	.WORD	0			; the previous state of the keys
 
-CSTEXT:	.WORD	SCREEN+<4.*TILEH*LINEW>+17., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/ROBOT/
-	.EVEN
-	.WORD	SCREEN+<6.*TILEH*LINEW>+14., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/CONSTRUCTION/
-	.EVEN
-	.WORD	SCREEN+<12.*TILEH*LINEW>+5., 5, 0
-	.ASCIZ	/THE SCREEN IS NOT WRITTEN YET/
-	.EVEN
-	.WORD	SCREEN+<22.*TILEH*LINEW>+14., 6, 0
-	.BYTE	4, '2
-	.ASCIZ	/> EXIT MENU/
-	.EVEN
-	.WORD	0
+CSTOT:	.WORD	0			; the sum of the resources
+CSDTAB:	.WORD	100., 10.
+CSDTBE:
+
+; Lcbe0_draw_resource_counts_in_construction_screen: the numbers of the resources (columns 13..14, white)
+; and their sum (columns 12..14). TODO: the working copy of the resources (Lfd29), now those of the player.
+Lcbe0_draw_resource_counts:
+	MOV	#HUDBUF, R4
+	MOV	#2, HDIGS
+	MOV	#' , HFILL
+	MOV	#Lfd22_player1_resource_counts, R5
+	MOV	#<SCREEN+<9.*TILEH*LINEW>+13.>, HSCR
+	MOV	#7, HCNT
+	CLR	CSTOT
+10$:	CLR	R0
+	BISB	(R5)+, R0
+	ADD	R0, CSTOT
+	MOV	HSCR, R1
+	MOV	#7, R2
+	CLR	R3
+	CALL	HBNUM
+	ADD	#<TILEH*LINEW>, HSCR
+	CMP	HCNT, #7
+	BNE	20$
+	ADD	#<TILEH*LINEW>, HSCR	; a blank row after the general resources
+20$:	DEC	HCNT
+	BNE	10$
+; the sum: three characters, leading spaces
+	MOV	#<SCREEN+<18.*TILEH*LINEW>+12.>, (R4)+
+	MOV	#7, (R4)+
+	CLR	(R4)+
+	MOV	CSTOT, R0
+	MOV	#CSDTAB, R2
+	CLR	R5			; no digits printed yet
+30$:	CLR	R1
+40$:	CMP	R0, (R2)
+	BLO	50$
+	SUB	(R2), R0
+	INC	R1
+	BR	40$
+50$:	TST	R1
+	BNE	60$
+	TST	R5
+	BNE	60$
+	MOVB	#' , (R4)+
+	BR	70$
+60$:	MOV	#1, R5
+	ADD	#'0, R1
+	MOVB	R1, (R4)+
+70$:	TST	(R2)+
+	CMP	R2, #CSDTBE
+	BNE	30$
+	ADD	#'0, R0			; the unit digit
+	MOVB	R0, (R4)+
+	CLRB	(R4)+			; the terminator
+	CLR	(R4)+			; the end of the list
+	PPUSTS	HUDBUF
+	RETURN
 
 ; Checks if the player has less than the maximum number of robots, and if so, opens the construction
 ; screen with R5 pointing to a free robot structure.
@@ -669,13 +748,18 @@ Lc85d_robot_construction:
 	PPUCMW	#CMDMENU		; the game area and the radar are not drawn
 	PPUCMW	#CMDCLS
 	PPUSTS	CSTEXT
-	MOV	@#PPUKEY, CSKEYO	; the keys held at the entry do not count
-10$:	MOV	@#PPUKEY, R0
-	MOV	R0, R1
-	BIC	CSKEYO, R1
-	MOV	R0, CSKEYO
-	BIT	#PKEYFR, R1
-	BEQ	10$
+	CALL	Lcbe0_draw_resource_counts
+	CLR	MNSEL
+	MOVB	#'1, MNSCL		; the selected item keeps the height
+10$:	MOVHW	CSOPT1, R0
+	MOV	#CSTAB, R1
+	MOV	#2, R2
+	CALL	Lmenu_select
+	TST	R0
+	BMI	20$			; STOP
+	BEQ	20$			; EXIT MENU
+	BR	10$			; START ROBOT: TODO
+20$:	MOVB	#'2, MNSCL
 ; the exit (Lcb8e_construction_screen_exit)
 	MOVB	#5, Lfd30_player_elevate_timer	; the player levitates a bit after exiting
 	CALL	Ld0ca_draw_in_game_screen
@@ -685,34 +769,17 @@ Lc85d_robot_construction:
 ;------------------------------------------------------------------------------
 ; The main menu (the PPU is in the menu mode: the screen is free for the texts)
 
-; A string of the menu, as for the PPU command CMDSTR: row, column, ink, paper, text
-.MACRO	MSTR	ROW, COL, INK, PAPER, TEXT
-	.WORD	SCREEN+<ROW*TILEH*LINEW>+COL, INK, PAPER
-	.ASCIZ	/TEXT/
-	.EVEN
-.ENDM
 
 MNSEL:	.WORD	0			; the selected item: 0 = START GAME, 1 = LOAD SAVED GAME
 MNKEYO:	.WORD	0			; the previous state of the keys
+MNSCL:	.BYTE	'2			; the height scale character of the selected item
+	.EVEN
 
-; The title: double height (control code 4, '2')
-MNTITLE:
-	.WORD	SCREEN+<8.*TILEH*LINEW>+17., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/NETHER/
-	.EVEN
-	.WORD	SCREEN+<10.*TILEH*LINEW>+18., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/EARTH/
-	.EVEN
-; the lines at the bottom: the original and the port with the version (VERSIO.MAC is generated by !compilelink.bat)
-	MSTR	30., 2., 5, 0, <ZX SPECTRUM 1987 ICON DESIGN LTD>
-	.WORD	SCREEN+<32.*TILEH*LINEW>+2, 5, 0
-	.ASCII	/UKNC 2026 NZEEMIN  /
-.INCLUDE /VERSIO.MAC/
-	.BYTE	0
-	.EVEN
-	.WORD	0
+.IF DF LANGRU
+.INCLUDE /NEMSGSRU.MAC/			; the texts of the main menu, Russian (tools/conv_lang.py)
+.IFF
+.INCLUDE /NEMSGS.MAC/			; the texts of the main menu
+.ENDC
 
 ; The items of a menu: left aligned. The selected one has the character ">" before it, is yellow and
 ; double height, the others are white and normal height. Lmenu_select changes the ink word, the scale
@@ -723,84 +790,14 @@ MNB_INK = 2
 MNB_SCALE = 7
 MNB_CHAR = 8.
 
-; The main menu: four items
-MNOPTS:
-	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-	.WORD	SCREEN+<19.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-	.WORD	SCREEN+<22.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-	.WORD	SCREEN+<25.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-MNOPT1:	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 6, 0
-	.BYTE	4, '2
-	.ASCIZ	/> START GAME/
-	.EVEN
-MNOPT2:	.WORD	SCREEN+<19.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  PALETTE/
-	.EVEN
-MNOPT3:	.WORD	SCREEN+<22.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  LOAD SAVED GAME/
-	.EVEN
-MNOPT4:	.WORD	SCREEN+<25.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  EXIT/
-	.EVEN
-	.WORD	0
-MNTAB:	.WORD	MNOPT1, MNOPT2, MNOPT3, MNOPT4
 
-; The pause menu: the title and three items
-PMTITLE:
-	.WORD	SCREEN+<8.*TILEH*LINEW>+14., 5, 0
-	.BYTE	4, '2
-	.ASCIZ	/GAME PAUSED/
-	.EVEN
-	.WORD	0
-PMOPTS:
-	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '2
-	.ASCIZ	/                 /
-	.EVEN
-PMOPT1:	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 6, 0
-	.BYTE	4, '2
-	.ASCIZ	/> CONTINUE/
-	.EVEN
-PMOPT2:	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  SAVE GAME/
-	.EVEN
-PMOPT3:	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  ABORT GAME/
-	.EVEN
-	.WORD	0
-PMTAB:	.WORD	PMOPT1, PMOPT2, PMOPT3
 
 MNLST:	.WORD	0			; Lmenu_select: the list of the strings of the items
 MNTAB1:	.WORD	0			; the table of the item blocks
 MNCNT:	.WORD	0			; the number of the items
 
 ; Selects an item of a menu: arrows up/down select (MNSEL = the selected item, set by the caller), fire
-; (Shift) chooses, STOP leaves. R0 = the list of the strings of the items (PPU command CMDSTS),
+; (Shift) chooses, STOP leaves. R0 = the word address of the list of the strings of the items (MOVHW, PPU command CMDSTS),
 ; R1 = the table of the addresses of the item blocks in it, R2 = the number of the items.
 ; Returns R0 = the chosen item (0..) or -1 (STOP).
 Lmenu_select:
@@ -819,7 +816,7 @@ Lc106_menu_redraw_options:
 	MOVB	#' , MNB_CHAR(R5)
 	BR	30$
 20$:	MOV	#6, MNB_INK(R5)		; the selected item: yellow, double height, with ">"
-	MOVB	#'2, MNB_SCALE(R5)
+	MOVB	MNSCL, MNB_SCALE(R5)
 	MOVB	#'>, MNB_CHAR(R5)
 30$:	INC	R4
 	CMP	R4, MNCNT
@@ -864,7 +861,7 @@ Lc100_title_screen:
 Lc100_title_redraw:
 	PPUCMW	#CMDCLS
 	PPUSTS	MNTITLE
-10$:	MOV	#MNOPTS, R0
+10$:	MOVHW	MNOPTS, R0
 	MOV	#MNTAB, R1
 	MOV	#4, R2
 	CALL	Lmenu_select
@@ -887,12 +884,8 @@ Lc100_title_redraw:
 ; radar buffers are
 Lstart_ppu:
 	CALL	RUNPPU
-	MOV	#FRBUF, R0
-	ASR	R0			; word address for the PPU
-	MOV	R0, @#PPUFRB
-	MOV	#Ld800_radar_view1, R0
-	ASR	R0
-	MOV	R0, @#PPURAD		; the radar buffers for the PPU
+	MOVHW	FRBUF, @#PPUFRB		; the word addresses for the PPU
+	MOVHW	Ld800_radar_view1, @#PPURAD	; the radar buffers
 	RETURN
 
 ; The pause menu (STOP in the game): CONTINUE returns to the game, SAVE GAME does nothing yet, ABORT GAME
@@ -903,7 +896,7 @@ Lpause_menu:
 	PPUCMW	#CMDCLS
 	PPUSTS	PMTITLE
 	CLR	MNSEL
-10$:	MOV	#PMOPTS, R0
+10$:	MOVHW	PMOPTS, R0
 	MOV	#PMTAB, R1
 	MOV	#3, R2
 	CALL	Lmenu_select
