@@ -1,10 +1,11 @@
 ; Nether Earth UKNC port: CPU side game logic.
-; Included from NEARTH.MAC. Currently a test program for the renderer (NERNDR.MAC): the game state
-; from the snapshot (NESNAP.MAC) is rendered into the frame buffer. STOP exits and prints the PPU
-; measurements.
-; With TESTREF defined (tools/run_snap_tests.py assembles with -s "TESTREF=1") the frame buffer is
-; compared with the one of the original game (NEREF.MAC) and the number of different bytes is
-; printed too; FIRE toggles the view: this port / original.
+; Included from NEARTH.MAC. The game loop (La69a_game_loop) and the control of the player; the
+; game state comes from the snapshot (NESNAP.MAC). Not ported yet: robots, bullets, AI, menus.
+; STOP exits and prints the PPU measurements.
+; With TESTREF defined (tools/run_snap_tests.py assembles with -s "TESTREF=1") the frame buffer and the
+; radar buffers are compared with the ones of the original game (NEREF.MAC) before the first cycle and
+; the number of different bytes is printed on exit.
+; With TESTSPEED defined (tools/run_speed_test.py) the speed of the renderer is measured.
 
 GAME:
 	CALL	RUNPPU			; Start PPU procedure, clear the screen
@@ -14,39 +15,92 @@ GAME:
 	MOV	#Ld800_radar_view1, R0
 	ASR	R0
 	MOV	R0, @#PPURAD		; the radar buffers for the PPU
+La600_start:
+.IF NDF NOMENU
+	CALL	Lc100_title_screen	; the main menu (the tests skip it: NOMENU)
+	TST	R0
+	BPL	5$
+	JMP	Lgame_exit		; STOP in the menu: exit
+5$:	PPUCMW	#CMDCLS			; clear the screen of the menu
+	CALL	Lnew_game
+.ENDC
+.IF DF TESTNEW
+	CALL	Lnew_game
+	CALL	TESTNW
+.ENDC
 	CALL	DRHUD			; the right panel (status), drawn once
 	PPUFRM	FRMBLK			; the frame around the game area, drawn by the PPU
 	CALL	DRPORT			; render
 	MOVB	#1, Lfd52_update_radar_buffer_signal
 	CALL	Lb029_update_radar_view
+	PPUCMW	#CMDGAME		; the PPU shows the game area and the radar
+.IF DF TESTSPEED
+	CALL	BENCH
+.ENDC
 .IF DF TESTREF
 	CALL	CMPREF
+	CALL	TESTRN
 .ENDC
 ;
-GMAIN:
-.IF DF TESTREF
-	MOV	@#PPUKEY, R0
-	MOV	R0, R1
-	BIC	KEYOLD, R1		; R1 = newly pressed keys
-	MOV	R0, KEYOLD
-	BIT	#PKEYFR, R1
-	BEQ	10$
-	COM	SHOWRF
-	BEQ	5$
-	CALL	DRORIG			; show the original buffer
-	BR	10$
-5$:	CALL	DRPORT			; show the port
-10$:
-.ENDC
+	MOV	@#PPUTCK, CYCT0
+;
+; The main game loop
+La69a_game_loop:
+	CALL	Ld37c_read_keyboard_input
+	CALL	Laf11_player_ship_control
+	; TODO: CALL Lb0ca_update_robots_bullets_and_ai
+	CALL	DRPORT			; Lccbd_redraw_game_area
+	CALL	Lad62_increase_time
+	; TODO: landing on a robot / a warbase (La6c8..)
 	BIT	#PKEYST, @#PPUKEY	; STOP key?
-	BEQ	GMAIN
+	BEQ	La69a_game_loop
+.IF NDF NOMENU
+	PPUCMW	#CMDMENU		; for now: back to the main menu (later: the pause menu)
+	JMP	La600_start
+.ENDC
 ;
 ; Exit: stop PPU, show measurements, wait for a key
+Lgame_exit:
 	CALL	STOPPU
 	CALL	STPALD
 	MOV	#EXITSC, R1
 	CALL	PRINT
+.IF DF TESTSPEED
+	MOV	#MSGSPB, R1
+	CALL	PRINT
+	MOV	SPTB, R0
+	CALL	PRDEC
+	MOV	#MSGSPF, R1
+	CALL	PRINT
+	MOV	SPTF, R0
+	CALL	PRDEC
+	MOV	#MSGSPN, R1
+	CALL	PRINT
+.ENDC
+.IF DF TESTNEW
+	MOV	#MSGNEW, R1
+	CALL	PRINT
+	MOV	#NWSUM, R4
+	MOV	(R4)+, R0
+	CALL	PRDEC
+	MOV	#MSGSP, R1
+	CALL	PRINT
+	MOV	(R4)+, R0
+	CALL	PRDEC
+	MOV	#MSGSP, R1
+	CALL	PRINT
+	MOV	(R4)+, R0
+	CALL	PRDEC
+	MOV	#MSGSP, R1
+	CALL	PRINT
+	MOV	(R4)+, R0
+	CALL	PRDEC
+.ENDC
 .IF DF TESTREF
+	MOV	#MSGRND, R1
+	CALL	PRINT
+	MOV	RNDSUM, R0
+	CALL	PRDEC
 	MOV	#MSGDIF, R1
 	CALL	PRINT
 	MOV	DIFCNT, R0
@@ -82,7 +136,20 @@ GMAIN:
 ; Parameter blocks for the PPU print command: screen address, ink, paper index, string
 FRMBLK:	.WORD	SCREEN+<<VIEW_ROW-1>*TILEH*LINEW>+<VIEW_COL-1>, VIEW_W+2, <VIEW_H/TILEH>+2, 0, 7
 
+.IF DF TESTSPEED
+MSGSPB:	.ASCIZ	/Render, 50Hz ticks for 20 frames: blank map /
+MSGSPF:	.ASCIZ	/, whole frame /
+MSGSPN:	.BYTE	15, 12
+	.ASCIZ	/(PPU runs at the same time)/
+.ENDC
+.IF DF TESTNEW
+MSGNEW:	.BYTE	15, 12
+	.ASCIZ	/New game checksums: /
+MSGSP:	.ASCIZ	/ /
+.ENDC
 .IF DF TESTREF
+MSGRND:	.BYTE	15, 12
+	.ASCIZ	/Random checksum: /
 MSGDIF:	.ASCIZ	/Different bytes: /
 MSGFST:	.ASCIZ	/  first at: /
 MSGRAD:	.BYTE	15, 12
@@ -98,25 +165,67 @@ MSGEND:	.BYTE	15, 12
 ;------------------------------------------------------------------------------
 
 ; Render the game area with the port code into the frame buffer
+; The frame is rendered into RNDBUF and then copied to FRBUF, which the PPU shows (no half drawn frames).
 DRPORT:	CALL	Lcfd7_draw_blank_map_in_buffer
 	CALL	Lccc6_draw_map_to_buffer
-	RETURN
-
-.IF DF TESTREF
-KEYOLD:	.WORD	0			; Previous PPUKEY value
-SHOWRF:	.WORD	0			; 0 = port is shown, -1 = original
-DIFCNT:	.WORD	0			; Number of different bytes
-DIFFST:	.WORD	0			; Index of the first different byte
-DIFRAD:	.WORD	0			; Number of different bytes in the radar buffers
-DIFRDF:	.WORD	0			; Index of the first different byte
-
-; Copy the original frame buffer into the frame buffer
-DRORIG:	MOV	#REFBUF, R0
+	MOV	#RNDBUF, R0
 	MOV	#FRBUF, R1
 	MOV	#<VIEW_BYTES/2>, R2
 10$:	MOV	(R0)+, (R1)+
 	SOB	R2, 10$
 	RETURN
+
+.IF DF TESTSPEED
+; Speed of the renderer on the CPU: ticks (PPUTCK, passed by the PPU every 50Hz tick) for SPN frames
+SPN = 20.
+SPT0:	.WORD	0
+SPTB:	.WORD	0			; the blank map: Lcfd7_draw_blank_map_in_buffer
+SPTF:	.WORD	0			; the whole frame: blank map + Lccc6_draw_map_to_buffer
+SPCNT:	.WORD	0
+
+BENCH:	MOV	@#PPUTCK, SPT0
+	MOV	#SPN, SPCNT
+10$:	CALL	Lcfd7_draw_blank_map_in_buffer
+	DEC	SPCNT
+	BNE	10$
+	MOV	@#PPUTCK, SPTB
+	SUB	SPT0, SPTB
+	MOV	@#PPUTCK, SPT0
+	MOV	#SPN, SPCNT
+20$:	CALL	DRPORT
+	DEC	SPCNT
+	BNE	20$
+	MOV	@#PPUTCK, SPTF
+	SUB	SPT0, SPTF
+	RETURN
+.ENDC
+
+.IF DF TESTREF
+RNDSUM:	.WORD	0			; The checksum of 1000 numbers of the random generator
+RNDCNT:	.WORD	0
+
+; Runs the random generator 1000 times and restores its state: RNDSUM = sum = sum * 2 + number
+TESTRN:	MOV	Lfd00_random_seed, -(SP)
+	MOV	Lfd00_random_seed+2, -(SP)
+	MOVB	Ld370_random_index, -(SP)
+	CLR	RNDSUM
+	MOV	#1000., RNDCNT
+10$:	CALL	Ld358_random
+	MOV	RNDSUM, R1
+	ASL	R1
+	ADD	R0, R1
+	MOV	R1, RNDSUM
+	DEC	RNDCNT
+	BNE	10$
+	MOVB	(SP)+, Ld370_random_index
+	MOV	(SP)+, Lfd00_random_seed+2
+	MOV	(SP)+, Lfd00_random_seed
+	RETURN
+
+DIFCNT:	.WORD	0			; Number of different bytes
+DIFFST:	.WORD	0			; Index of the first different byte
+DIFRAD:	.WORD	0			; Number of different bytes in the radar buffers
+DIFRDF:	.WORD	0			; Index of the first different byte
 
 ; Compare the frame buffer with the original: DIFCNT = number of different bytes, DIFFST = first
 CMPREF:	CLR	DIFRAD
@@ -149,7 +258,767 @@ CMPREF:	CLR	DIFRAD
 .ENDC
 
 ;------------------------------------------------------------------------------
+; The new game: La600_start (the initial state) and Lbc6f_initialize_map, which builds the map and the
+; records of the buildings from the descriptors of NEMAP.MAC. Map pointers are offsets.
+
+MAPXB:	.WORD	0			; the x of the first column of the list being added (0 or 256.)
+BLDW:	.WORD	0			; the next record of a warbase
+BLDF:	.WORD	0			; the next record of a factory
+
+; The state at the start of a game
+Lnew_game:
+; clear the state block (the index of the random generator is kept, as in the original)
+	CLR	R2
+	BISB	Ld370_random_index, R2
+	MOV	R2, -(SP)
+	MOV	#GSTATE, R0
+	MOV	#<GS_SIZE/2>, R1
+10$:	CLR	(R0)+
+	SOB	R1, 10$
+	MOV	(SP)+, R2
+	MOVB	R2, Ld370_random_index
+; free slots of the robots, bullets and decorations
+	MOV	#Lda00_player1_robots, R0
+	MOV	#<MAX_ROBOTS_PER_PLAYER*2>, R1
+20$:	MOV	#NOSLOT, (R0)
+	ADD	#ROBOT_STRUCT_SIZE, R0
+	SOB	R1, 20$
+	MOV	#Ld7d3_bullets, R0
+	MOV	#MAX_BULLETS, R1
+30$:	MOV	#NOSLOT, (R0)
+	ADD	#BULLET_STRUCT_SIZE, R0
+	SOB	R1, 30$
+	MOV	#Lff01_building_decorations, R0
+	MOV	#56., R1
+40$:	MOV	#NOSLOT, (R0)
+	ADD	#DECOR_STRUCT_SIZE, R0
+	SOB	R1, 40$
+; the initial values
+	MOV	#12345., Lfd00_random_seed
+	MOV	#12345., Lfd00_random_seed+2
+	MOV	#17., Lfd0e_player_x
+	MOVB	#10., Lfd0d_player_y
+	MOVB	#3, Lfd30_player_elevate_timer	; the player floats a bit at the start
+	MOVB	#INITIAL_PLAYER_RESOURCES, Lfd22_player1_resource_counts
+	MOVB	#INITIAL_PLAYER_RESOURCES, Lfd4a_player2_resource_counts
+; the map; the player is put to the map and the radar is updated at its end
+Lbc6f_initialize_map:
+	MOV	#Ldd00_map, R0
+	MOV	#<MAP_SIZE/2>, R1
+10$:	CLR	(R0)+
+	SOB	R1, 10$
+	MOV	#Ld800_radar_view1, R0		; both radar views
+	MOV	#<512./2>, R1
+20$:	CLR	(R0)+
+	SOB	R1, 20$
+	MOV	#Lbda9_map_elements_part1, R5
+	CLR	MAPXB
+	CALL	Lbcd6_add_elements_to_map
+	MOV	#Lbe79_map_elements_part2, R5
+	MOV	#256., MAPXB
+	CALL	Lbcd6_add_elements_to_map
+	MOV	#Lfd70_warbases, BLDW
+	MOV	#Lfd84_factories, BLDF
+	MOV	#Lbf46_warbases_factories_part1, R5
+	CLR	MAPXB
+	CALL	Lbcf9_add_warbases_and_factories
+	MOV	#Lbf6e_warbases_factories_part2, R5
+	MOV	#256., MAPXB
+	CALL	Lbcf9_add_warbases_and_factories
+	CLR	R0
+	CLR	R2
+	CALL	Lbb86_assign_warbase_to_player	; the warbase 0 to the player 1
+	MOV	#1, R0
+	MOV	#1, R2
+	CALL	Lbb86_assign_warbase_to_player	; the warbases 1, 2 and 3 to the player 2
+	MOV	#2, R0
+	MOV	#1, R2
+	CALL	Lbb86_assign_warbase_to_player
+	MOV	#3, R0
+	MOV	#1, R2
+	CALL	Lbb86_assign_warbase_to_player
+	CALL	Lbb09_update_base_factory_counts
+	MOVB	#1, Lfd52_update_radar_buffer_signal
+	JMP	Lb024_add_player_to_map
+
+; Writes the map byte R1 at the offset R3 (not outside of the map)
+PUTMAP:	CMP	R3, #MAP_SIZE
+	BHIS	10$
+	MOVB	R1, Ldd00_map(R3)
+10$:	RETURN
+
+; Adds an element to the map: R3 = the offset of the bottom left cell, R0 = the type. It is 2x2 cells, only
+; the bottom left one has bit 5 = 0. Preserves R3. Clobbers R1.
+Lbd91_add_element_to_map:
+	MOV	R3, -(SP)
+	MOV	R0, R1
+	CALL	PUTMAP
+	BIS	#40, R1
+	INC	R3
+	CALL	PUTMAP
+	SUB	#1001, R3			; one row up, the first column
+	CALL	PUTMAP
+	INC	R3
+	CALL	PUTMAP
+	MOV	(SP)+, R3
+	RETURN
+
+; Adds a complex structure to the map: R3 = the offset, R0 = the index of the structure.
+; Preserves R3. Clobbers R0, R1, R2, R4.
+Lbd61_add_complex_structure:
+	MOV	R3, -(SP)
+	ASL	R0
+	MOV	Lbf9c_map_complex_structure_ptrs(R0), R2
+10$:	CLR	R0
+	BISB	(R2)+, R0
+	BEQ	20$
+	CALL	Lbd91_add_element_to_map
+20$:	MOVB	(R2)+, R1			; the offset to the next element, signed
+	MOVB	(R2)+, R4
+	MOV	R1, R0
+	BIS	R4, R0
+	BEQ	30$				; x == y == 0: the end
+	ADD	R1, R3
+	ASH	#9., R4
+	ADD	R4, R3
+	BR	10$
+30$:	MOV	(SP)+, R3
+	RETURN
+
+; Adds a list of map elements (type, x, y; 0 at the end) to the map: R5 = the list, MAPXB = the x of
+; the first column. The elements with the bit 7 are complex structures.
+Lbcd6_add_elements_to_map:
+10$:	CLR	R0
+	BISB	(R5)+, R0
+	BEQ	90$
+	CLR	R3
+	BISB	(R5)+, R3
+	ADD	MAPXB, R3
+	CLR	R1
+	BISB	(R5)+, R1
+	SWAB	R1
+	ASL	R1				; y * 512
+	ADD	R1, R3
+	BIT	#200, R0
+	BNE	20$
+	CALL	Lbd91_add_element_to_map
+	BR	10$
+20$:	BIC	#200, R0
+	CALL	Lbd61_add_complex_structure
+	BR	10$
+90$:	RETURN
+
+; Adds the warbases and the factories (type, x, y; 377 at the end) to the map and to the lists of
+; records: R5 = the list, MAPXB = the x of the first column, BLDW and BLDF = the next records.
+; The factories get the decoration of their type.
+Lbcf9_add_warbases_and_factories:
+10$:	MOVB	(R5)+, R0
+	BMI	90$
+	CLR	R3
+	BISB	(R5)+, R3
+	ADD	MAPXB, R3			; x
+	CLR	R2
+	BISB	(R5)+, R2			; y
+	TST	R0
+	BNE	20$
+	MOV	BLDW, R4
+	ADD	#BUILDING_STRUCT_SIZE, BLDW
+	BR	30$
+20$:	MOV	BLDF, R4
+	ADD	#BUILDING_STRUCT_SIZE, BLDF
+30$:	MOV	R3, BUILDING_STRUCT_X(R4)
+	MOVB	R2, BUILDING_STRUCT_Y(R4)
+	MOVB	R0, BUILDING_STRUCT_TYPE(R4)
+	CLRB	BUILDING_STRUCT_TIMER(R4)
+	SWAB	R2
+	ASL	R2
+	ADD	R2, R3				; the map offset
+	MOV	R0, -(SP)			; the type
+	TST	R0
+	BNE	40$
+	CALL	Lbd61_add_complex_structure	; R0 = 0: the structure of a warbase
+	BR	50$
+40$:	MOV	#1, R0
+	CALL	Lbd61_add_complex_structure	; the structure of a factory
+	SUB	#2000, R3			; two rows up
+	MOV	(SP), R1
+	CALL	Lbc43_add_decoration_to_map
+50$:	TST	(SP)+
+	BR	10$
+90$:	RETURN
+
+; Adds a decoration (a flag, "H", the type of a factory) at the map offset R3, type R1: takes the first free
+; record and marks the map cell (bit 6). Preserves R1, R3. Clobbers R0, R2.
+Lbc43_add_decoration_to_map:
+	MOV	#Lff01_building_decorations, R2
+	MOV	#56., R0
+10$:	CMP	(R2), #NOSLOT
+	BEQ	20$
+	ADD	#DECOR_STRUCT_SIZE, R2
+	SOB	R0, 10$
+	RETURN
+20$:	BISB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	MOV	R3, (R2)
+	MOVB	R1, DECOR_STRUCT_TYPE(R2)
+	RETURN
+
+; Removes the decoration at the map offset R3, if there is one. Preserves R1, R3, R5.
+Lbc5d_remove_decoration:
+	MOV	R5, -(SP)
+	MOV	R1, -(SP)
+	CALL	Lcdf5_find_decoration_with_ptr
+	BNE	10$
+	MOV	#NOSLOT, (R5)
+	BICB	#MAPB_OCCUPIED, Ldd00_map(R3)
+10$:	MOV	(SP)+, R1
+	MOV	(SP)+, R5
+	RETURN
+
+; Marks the owner of a warbase or a factory (bit 6: the player 1, bit 5: the player 2) and returns its map
+; offset. R0 = the index, R4 = the array of the records, R2 = the owner (0 or 1) => R3.
+; Clobbers R0, R1.
+Lbbb9_mark_ath_building:
+	MOV	R0, R1
+	ASL	R1
+	ADD	R0, R1
+	ASL	R1				; * BUILDING_STRUCT_SIZE
+	ADD	R4, R1
+	MOV	#100, R0			; the player 1: bit 6
+	TST	R2
+	BEQ	10$
+	MOV	#40, R0				; the player 2: bit 5
+10$:	CLR	R3
+	BISB	BUILDING_STRUCT_TYPE(R1), R3
+	BIC	#^C37, R3
+	BIS	R0, R3
+	MOVB	R3, BUILDING_STRUCT_TYPE(R1)
+	MOV	BUILDING_STRUCT_X(R1), R3
+	CLR	R0
+	BISB	BUILDING_STRUCT_Y(R1), R0
+	SWAB	R0
+	ASL	R0
+	ADD	R0, R3
+	RETURN
+
+; Gives a warbase to a player: R0 = the warbase, R2 = the owner (0 the player, 1 the enemy). Removes the
+; old flags above it and puts the new ones: "H" and the flag of the player, or the flag of the enemy.
+Lbb86_assign_warbase_to_player:
+	MOV	R2, -(SP)
+	MOV	#Lfd70_warbases, R4
+	CALL	Lbbb9_mark_ath_building
+	SUB	#4000, R3			; 4 rows up
+	CALL	Lbc5d_remove_decoration
+	SUB	#4, R3
+	CALL	Lbc5d_remove_decoration
+	ADD	#10, R3
+	CALL	Lbc5d_remove_decoration
+	MOV	(SP)+, R2
+	TST	R2
+	BEQ	10$
+	MOV	#8., R1				; the flag of the enemy
+	CALL	Lbc43_add_decoration_to_map
+	RETURN
+10$:	SUB	#4, R3
+	CLR	R1				; "H"
+	CALL	Lbc43_add_decoration_to_map
+	SUB	#4, R3
+	MOV	#7, R1				; the flag of the player
+	CALL	Lbc43_add_decoration_to_map
+	RETURN
+
+; Counts the warbases and the factories of each type of each player
+Lbb09_update_base_factory_counts:
+	MOV	#Lfd3a_p1_base_factory_counts, R1
+	MOV	#7, R2
+10$:	CLRB	(R1)+
+	SOB	R2, 10$
+	MOV	#Lfd42_p2_base_factory_counts, R1
+	MOV	#7, R2
+20$:	CLRB	(R1)+
+	SOB	R2, 20$
+	MOV	#Lfd70_warbases, R1
+	MOV	#<N_WARBASES+N_FACTORIES>, R2
+30$:	MOVB	BUILDING_STRUCT_TYPE(R1), R0
+	BMI	50$				; destroyed
+	BIT	#100, R0
+	BEQ	35$
+	MOV	#Lfd3a_p1_base_factory_counts, R3
+	BR	40$
+35$:	BIT	#40, R0
+	BEQ	50$				; neutral
+	MOV	#Lfd42_p2_base_factory_counts, R3
+40$:	BIC	#^C7, R0
+	ADD	R0, R3
+	INCB	(R3)
+50$:	ADD	#BUILDING_STRUCT_SIZE, R1
+	SOB	R2, 30$
+	RETURN
+
+.IF DF TESTNEW
+; The checksums of the state of a new game (tools/conv_map.py --newgame): sum = sum * 2 + byte
+NWSUM:	.BLKW	4
+NWFOLD:	CLR	R3			; R0 = the address, R1 = the length, R2 = the sum
+	BISB	(R0)+, R3
+	ASL	R2
+	ADD	R3, R2
+	SOB	R1, NWFOLD
+	RETURN
+
+TESTNW:	MOV	#Ldd00_map, R0
+	MOV	#MAP_SIZE, R1
+	CLR	R2
+	CALL	NWFOLD
+	MOV	R2, NWSUM
+	MOV	#Lfd70_warbases, R0
+	MOV	#<<N_WARBASES+N_FACTORIES>*BUILDING_STRUCT_SIZE>, R1
+	CLR	R2
+	CALL	NWFOLD
+	MOV	R2, NWSUM+2
+	MOV	#Lff01_building_decorations, R0
+	MOV	#<56.*DECOR_STRUCT_SIZE>, R1
+	CLR	R2
+	CALL	NWFOLD
+	MOV	R2, NWSUM+4
+	MOV	#Lfd22_player1_resource_counts, R0
+	MOV	#16., R1
+	CLR	R2
+	CALL	NWFOLD
+	MOV	#Lfd3a_p1_base_factory_counts, R0
+	MOV	#16., R1
+	CALL	NWFOLD
+	MOV	R2, NWSUM+6
+	RETURN
+.ENDC
+
+;------------------------------------------------------------------------------
+; The main menu (the PPU is in the menu mode: the screen is free for the texts)
+
+; A string of the menu, as for the PPU command CMDSTR: row, column, ink, paper, text
+.MACRO	MSTR	ROW, COL, INK, PAPER, TEXT
+	.WORD	SCREEN+<ROW*TILEH*LINEW>+COL, INK, PAPER
+	.ASCIZ	/TEXT/
+	.EVEN
+.ENDM
+
+MNSEL:	.WORD	0			; the selected item: 0 = START GAME, 1 = LOAD SAVED GAME
+MNKEYO:	.WORD	0			; the previous state of the keys
+
+; The title: double height (control code 4, '2')
+MNTITLE:
+	.WORD	SCREEN+<8.*TILEH*LINEW>+17., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/NETHER/
+	.EVEN
+	.WORD	SCREEN+<10.*TILEH*LINEW>+18., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/EARTH/
+	.EVEN
+; the lines at the bottom: the original and the port with the version (VERSIO.MAC is generated by !compilelink.bat)
+	MSTR	30., 2., 5, 0, <ZX SPECTRUM 1987 ICON DESIGN LTD>
+	.WORD	SCREEN+<32.*TILEH*LINEW>+2, 5, 0
+	.ASCII	/UKNC 2026 NZEEMIN  /
+.INCLUDE /VERSIO.MAC/
+	.BYTE	0
+	.EVEN
+	.WORD	0
+
+; The items, left aligned. The selected one has the character ">" before it, is yellow and double height,
+; the other one is white and normal height. Lc106_title_redraw_options changes the ink word of a block
+; (MNOPTn+2), the scale character (MNSCn) and the first character of the text (MNCHn). The two blocks
+; before them erase the old items (a double height item takes two rows of the screen).
+MNOPTS:
+	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4, '2
+	.ASCIZ	/                 /
+	.EVEN
+MNOPT1:	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 6, 0
+	.BYTE	4
+MNSC1:	.BYTE	'2
+MNCH1:	.ASCIZ	/> START GAME/
+	.EVEN
+MNOPT2:	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
+	.BYTE	4
+MNSC2:	.BYTE	'1
+MNCH2:	.ASCIZ	/  LOAD SAVED GAME/
+	.EVEN
+	.WORD	0
+
+; The main menu: arrows up/down select, fire (Shift) chooses. Returns R0 = 0 to start the game,
+; -1 to exit (STOP). TODO: LOAD SAVED GAME (needs the disk), the music, the changing color of the title.
+Lc100_title_screen:
+	PPUCMW	#CMDCLS
+	PPUSTS	MNTITLE
+	CLR	MNSEL
+	MOV	@#PPUKEY, MNKEYO	; the keys held at the entry do not count
+Lc106_title_redraw_options:
+	MOV	#6, MNOPT1+2			; the first item is selected: yellow, double height, with ">"
+	MOV	#7, MNOPT2+2			; the other item: white, normal height
+	MOVB	#'2, MNSC1
+	MOVB	#'1, MNSC2
+	MOVB	#'>, MNCH1
+	MOVB	#' , MNCH2
+	TST	MNSEL
+	BEQ	10$
+	MOV	#7, MNOPT1+2
+	MOV	#6, MNOPT2+2
+	MOVB	#'1, MNSC1
+	MOVB	#'2, MNSC2
+	MOVB	#' , MNCH1
+	MOVB	#'>, MNCH2
+10$:	PPUSTS	MNOPTS
+Lc1a1_wait_for_key_press_loop:
+	MOV	@#PPUKEY, R0
+	MOV	R0, R1
+	BIC	MNKEYO, R1		; the keys pressed now
+	MOV	R0, MNKEYO
+	BIT	#PKEYST, R1
+	BNE	Lc100_exit
+	BIT	#PKEYUP, R1
+	BEQ	20$
+	CLR	MNSEL
+	BR	Lc106_title_redraw_options
+20$:	BIT	#PKEYDN, R1
+	BEQ	30$
+	MOV	#1, MNSEL
+	BR	Lc106_title_redraw_options
+30$:	BIT	#PKEYFR, R1
+	BEQ	Lc1a1_wait_for_key_press_loop
+	TST	MNSEL
+	BNE	Lc1a1_wait_for_key_press_loop	; LOAD SAVED GAME is not available yet
+	CLR	R0
+	RETURN
+Lc100_exit:
+	MOV	#-1, R0
+	RETURN
+
+;------------------------------------------------------------------------------
+; Keyboard
+
+; PPUKEY has the same bits as the keyboard state of the original: 0 right, 1 left, 2 down, 3 up, 4 fire
+Lfd0c_keyboard_state:	.WORD	0
+
+Ld37c_read_keyboard_input:
+	MOV	@#PPUKEY, R0
+	BIC	#^C37, R0
+	MOV	R0, Lfd0c_keyboard_state
+	RETURN
+
+;------------------------------------------------------------------------------
+; Random numbers: the same generator as in the original: a 32 bit shift register (the 4 bytes of the seed)
+; with the new bit from the bits 3 and 6 of the first byte, and an output chosen by the bytes themselves.
+; Returns R0 = the next random number (0..255), preserves the other registers.
+Ld358_random:
+	MOV	R1, -(SP)
+	CLR	R0
+	BISB	Lfd00_random_seed, R0
+	BIC	#^C110, R0			; and 72
+	ADD	#70, R0				; add 56
+	BIT	#100, R0			; the carry of the 2 rlca of the original is the bit 6
+	BEQ	10$
+	SEC
+	BR	20$
+10$:	CLC
+20$:	ROLB	Lfd00_random_seed+3
+	ROLB	Lfd00_random_seed+2
+	ROLB	Lfd00_random_seed+1
+	ROLB	Lfd00_random_seed
+	CLR	R1
+	BISB	Ld370_random_index, R1
+	CLR	R0
+	BISB	Lfd00_random_seed(R1), R0
+	BIC	#^C3, R0
+	MOVB	R0, Ld370_random_index		; the next index
+	MOV	R0, R1
+	CLR	R0
+	BISB	Lfd00_random_seed(R1), R0
+	MOV	(SP)+, R1
+	RETURN
+
+;------------------------------------------------------------------------------
+; Time
+
+CYCT0:	.WORD	0			; PPUTCK at the start of the cycle
+
+; Increases the time by 5 minutes and checks if a whole day has passed; shows the time; waits for
+; the end of the cycle (the game does not run faster than 5 cycles per second).
+Lad62_increase_time:
+	CALL	Ld358_random
+	CLR	R0
+	BISB	Lfd35_minutes, R0
+	ADD	#5, R0
+	MOVB	R0, Lfd35_minutes
+	CMP	R0, #60.
+	BNE	Lad85_increase_time_done
+	CLRB	Lfd35_minutes
+	INCB	Lfd36_hours
+	CMPB	Lfd36_hours, #24.
+	BNE	Lad85_increase_time_done
+	CLRB	Lfd36_hours
+	INC	Lfd37_days
+	; TODO: CALL Lae38_gain_day_resources
+Lad85_increase_time_done:
+	CALL	DRTIME			; the day and the time on the panel
+	; TODO: Lae6b_game_over_check, the capture of the buildings
+Lae1d_wait_for_the_cycle:
+	MOV	@#PPUTCK, R0
+	SUB	CYCT0, R0
+	CMP	R0, #MIN_INTERRUPTS_PER_GAME_CYCLE
+	BLO	Lae1d_wait_for_the_cycle
+	MOV	@#PPUTCK, CYCT0
+	RETURN
+
+;------------------------------------------------------------------------------
+; The player
+
+; Computes the map pointer (offset) of the player
+Lcca0_compute_player_map_ptr:
+	MOV	Lfd0e_player_x, R3
+	CLR	R0
+	BISB	Lfd0d_player_y, R0
+; Computes the map pointer: R3 = x, R0 = y => R3 = x + y * 512. Clobbers R0.
+Lcca6_compute_map_ptr:
+	SWAB	R0
+	ASL	R0
+	ADD	R0, R3
+	RETURN
+
+; Removes the player from the map (bit 7), and then draws the player in the radar view
+Lb01d_remove_player_from_map:
+	CALL	Lcca0_compute_player_map_ptr
+	BICB	#MAPB_PLAYER, Ldd00_map(R3)
+	JMP	Lb036_flicker_player_in_radar
+
+; Marks that the player is in the map (bit 7), and updates the radar buffers if necessary
+Lb024_add_player_to_map:
+	CALL	Lcca0_compute_player_map_ptr
+	BISB	#MAPB_PLAYER, Ldd00_map(R3)
+	JMP	Lb029_update_radar_view
+
+; Controls the player ship using the keyboard
+Laf11_player_ship_control:
+	CALL	Lb01d_remove_player_from_map
+; If the player is pressing up/down, reduce the effect of the elevate timer
+	BIT	#014, Lfd0c_keyboard_state
+	BEQ	Laf25_ship_control_x
+	TSTB	Lfd30_player_elevate_timer
+	BEQ	Laf25_ship_control_x
+	DECB	Lfd30_player_elevate_timer
+Laf25_ship_control_x:
+	MOV	Lfd0c_keyboard_state, R0
+	BIC	#^C3, R0
+	BEQ	Laf77_ship_control_y		; left/right are not pressed
+	CMP	R0, #3
+	BEQ	Laf77_ship_control_y		; both are pressed
+	MOV	Lfd0e_player_x, R3
+	BIT	#1, R0
+	BNE	Laf42_move_right
+	CMP	R3, #MIN_PLAYER_X
+	BEQ	Laf77_ship_control_y
+	DEC	R3
+	BR	Laf4c_move_if_no_collision
+Laf42_move_right:
+	CMP	R3, #MAX_PLAYER_X
+	BEQ	Laf77_ship_control_y
+	INC	R3
+Laf4c_move_if_no_collision:
+	CLR	R0
+	BISB	Lfd0d_player_y, R0
+	CALL	Lb052_check_player_collision
+	BCS	Laf57_collision
+	MOV	R3, Lfd0e_player_x
+Laf57_collision:
+; See if we need to scroll the map
+	MOV	Lfd0e_player_x, R0
+	SUB	Lfd0a_scroll_x, R0
+	BIC	#177400, R0
+	MOV	Lfd0a_scroll_x, R1
+	CMP	R0, #13.			; player in the left screen edge
+	BNE	10$
+	DEC	R1
+10$:	CMP	R0, #22.			; player in the right screen edge
+	BNE	20$
+	INC	R1
+20$:	MOV	R1, Lfd0a_scroll_x
+	MOV	R1, Lfd06_scroll_ptr		; the map pointer of the first column of the view
+Laf77_ship_control_y:
+	CLR	R2
+	BISB	Lfd0d_player_y, R2
+	MOV	Lfd0c_keyboard_state, R0
+	ASR	R0
+	ASR	R0
+	BIC	#^C3, R0
+	BEQ	Lafa2_ship_control_altitude	; up/down are not pressed
+	CMP	R0, #3
+	BEQ	Lafa2_ship_control_altitude
+	BIT	#1, R0
+	BEQ	10$
+	INC	R2				; down
+10$:	BIT	#2, R0
+	BEQ	20$
+	DEC	R2				; up
+20$:	BIC	#^C17, R2
+	BEQ	Lafa2_ship_control_altitude	; do not go beyond the map borders
+	MOV	Lfd0e_player_x, R3
+	MOV	R2, R4				; (Lb052 does not change R4)
+	MOV	R2, R0
+	CALL	Lb052_check_player_collision
+	BCS	Lafa2_ship_control_altitude	; collision
+	MOVB	R4, Lfd0d_player_y
+Lafa2_ship_control_altitude:
+	TSTB	Lfd30_player_elevate_timer
+	BEQ	Lafae_no_auto_elevate
+	DECB	Lfd30_player_elevate_timer
+	BR	Lafb5_elevate
+Lafae_no_auto_elevate:
+	BIT	#020, Lfd0c_keyboard_state
+	BEQ	Lafc3_gravity
+Lafb5_elevate:
+	CLR	R0
+	BISB	Lfd10_player_altitude, R0
+	CMP	R0, #MAX_PLAYER_ALTITUDE
+	BHIS	Lafdb_continue
+	ADD	#2, R0
+	MOVB	R0, Lfd10_player_altitude
+	BR	Lafdb_continue
+Lafc3_gravity:
+	CLR	R4
+	BISB	Lfd10_player_altitude, R4
+	DEC	R4				; the ship falls with gravity
+	BMI	Lafdb_continue
+	CLR	R0
+	BISB	Lfd0d_player_y, R0
+	MOV	Lfd0e_player_x, R3
+	CALL	Lb052_check_player_collision
+	CMP	R4, R1
+	BLO	Lafdb_continue			; collision when going down
+	MOVB	R4, Lfd10_player_altitude
+Lafdb_continue:
+	CALL	Lafe6_radar_scroll
+	INCB	Lfd1e_player_visible_in_radar	; the player blinks in the radar
+	JMP	Lb024_add_player_to_map
+
+; Checks if we need to scroll the radar view due to the player movement
+Lafe6_radar_scroll:
+	MOV	Lfd0e_player_x, R0
+	ASR	R0
+	ASR	R0
+	ASR	R0				; x / 8
+	CLR	R1
+	BISB	Lfd1b_radar_scroll_x_tile, R1
+	SUB	R1, R0
+	BIC	#177400, R0			; the position in the radar view in tiles, 8 bit
+	CMP	R0, #2
+	BLO	Lafff_radar_scroll_left
+	CMP	R0, #14.
+	BHIS	Lb005_radar_scroll_right
+	RETURN
+Lafff_radar_scroll_left:
+	SUB	#8., R1
+	BMI	Lafe6_ret			; at the left end of the map
+	BR	Lb00b_update_radar_scroll
+Lb005_radar_scroll_right:
+	ADD	#8., R1
+	CMP	R1, #56.
+	BEQ	Lafe6_ret			; at the right end of the map
+Lb00b_update_radar_scroll:
+	MOVB	R1, Lfd1b_radar_scroll_x_tile
+	ASL	R1
+	ASL	R1
+	ASL	R1
+	MOV	R1, Lfd1c_radar_scroll_x
+	MOVB	#1, Lfd52_update_radar_buffer_signal
+Lafe6_ret:
+	RETURN
+
+; Checks whether there would be a collision with the player altitude in a 3x3 area centered around
+; the coordinates R3 = x, R0 = y. Returns C = collision, R1 = the maximum altitude in the area.
+; Preserves R3, R4. Clobbers R0, R2, R5.
+Lb052_check_player_collision:
+	MOV	R3, -(SP)
+	CALL	Lcca6_compute_map_ptr
+	MOV	R3, R2
+	CLR	R1
+	CALL	Lb096_get_altitude_with_objects
+	INC	R2				; x += 1
+	CALL	Lb096_get_altitude_with_objects
+	SUB	#1000, R2			; y -= 1
+	CALL	Lb096_get_altitude_with_objects
+	DEC	R2				; x -= 1
+	CALL	Lb096_get_altitude_with_objects
+	DEC	R2				; x -= 1
+	CALL	Lb099_get_object_altitude
+	ADD	#1000, R2			; y += 1
+	CALL	Lb099_get_object_altitude
+	ADD	#1000, R2			; y += 1
+	CMP	R2, #MAP_SIZE
+	BGE	10$				; edge of the map
+	CALL	Lb099_get_object_altitude
+	INC	R2				; x += 1
+	CALL	Lb099_get_object_altitude
+	INC	R2				; x += 1
+	CALL	Lb099_get_object_altitude
+10$:	CLR	R0
+	BISB	Lfd10_player_altitude, R0
+	CMP	R0, R1
+	MOV	(SP)+, R3			; (MOV does not change C)
+	RETURN
+
+; Gets the altitude of a position in the map (R2) and updates R1 (the maximum so far)
+Lb096_get_altitude_with_objects:
+	MOVB	Ldd00_map(R2), R0
+	BIC	#177740, R0
+	MOVB	Ld7bc_map_piece_heights(R0), R0
+	CALL	Lb0ab_max_of_a_and_c
+; Gets the altitude of the robot or the decoration at the position R2, updates R1
+Lb099_get_object_altitude:
+	MOV	R2, R3
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BEQ	Lb0ab_ret
+	MOV	R1, -(SP)
+	CALL	Lcdd8_get_robot_at_ptr
+	BNE	10$
+	MOV	(SP)+, R1
+	CLR	R0
+	BISB	ROBOT_STRUCT_HEIGHT(R5), R0
+	CLR	R3
+	BISB	ROBOT_STRUCT_ALTITUDE(R5), R3
+	ADD	R3, R0
+	BR	Lb0ab_max_of_a_and_c
+10$:	CALL	Lcdf5_find_decoration_with_ptr
+	BEQ	20$
+	MOV	(SP)+, R1			; neither a robot nor a decoration
+	RETURN
+20$:	MOV	(SP)+, R1
+	CLR	R0
+	BISB	DECOR_STRUCT_TYPE(R5), R0
+	MOVB	Lb0c1_decoration_altitudes(R0), R0
+; R1 = max(R1, R0)
+Lb0ab_max_of_a_and_c:
+	CMP	R0, R1
+	BLO	Lb0ab_ret
+	MOV	R0, R1
+Lb0ab_ret:
+	RETURN
+
+Lb0c1_decoration_altitudes:
+	.BYTE	017				; warbase "H"
+	.BYTE	026, 025, 025, 026, 026, 026	; pieces on top of factories
+	.BYTE	031, 031			; flags
+
+; Altitudes of the map elements (by the type)
+Ld7bc_map_piece_heights:
+	.BYTE	000, 000, 002, 002, 002, 002, 003, 003, 006, 006, 006, 006, 000, 000, 000, 007
+	.BYTE	017, 007, 017, 000, 000, 143, 000
+	.EVEN
+
+;------------------------------------------------------------------------------
 
 ; Frame buffer: VIEW_W x VIEW_H, 1bpp, VIEW_W bytes per line. The PPU reads it from here.
 	.EVEN
 FRBUF:	.BLKB	VIEW_BYTES
+; The frame is rendered here (NERNDR.MAC) and copied to FRBUF when it is ready
+RNDBUF:	.BLKB	VIEW_BYTES

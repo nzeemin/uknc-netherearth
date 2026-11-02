@@ -42,8 +42,8 @@ Lfd51_robot_player_or_enemy:
 	.BYTE	001
 Lfd52_update_radar_buffer_signal:
 	.BYTE	000
-	; padding
-	.BYTE	000
+Ld370_random_index:
+	.BYTE	001
 Lfd22_player1_resource_counts:
 	.BYTE	143,143,000,143,143,143,143,000
 Lfd4a_player2_resource_counts:

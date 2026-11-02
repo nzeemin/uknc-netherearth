@@ -46,8 +46,20 @@ DRHUD:	PPUSTS	HUDTAB
 	PPUSTS	HUDBUF
 	RETURN
 
+; Shows the day and the time on the panel. Waits only for the previous PPU command to finish
+; (HUDBUF is rewritten after the PPU has read the previous list), not for this one.
+DRTIME:	TST	@#PPUCOM
+	BNE	DRTIME
+	MOV	#HUDBUF, R4
+	CALL	HBTIME
+	CLR	(R4)+
+	MOV	#HUDBUF, @#PPUDAT
+	MOV	#CMDSTS, @#PPUCOM
+	RETURN
+
 ; Builds the strings with the numbers of the panel in HUDBUF
 HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
+	CALL	HBTIME
 ; the resources of the player: 7 numbers, rows 17..23, columns 8..9
 	MOV	#2, HDIGS
 	MOV	#' , HFILL
@@ -75,6 +87,64 @@ HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
 	CALL	HBCNTS
 	CLR	(R4)+			; the end of the list
 	RETURN
+
+; The day (5 characters, leading spaces) and the time (hours.minutes) next to " DAY:" and "TIME:":
+; white on red, columns 5..9 of the panel, rows 0 and 1 (Lad62_increase_time).
+HBTIME:	MOV	#<SCREEN+HUD_COL+5.>, (R4)+
+	MOV	#7, (R4)+
+	MOV	#2, (R4)+
+	MOV	Lfd37_days, R0
+	MOV	#HDTAB, R2
+	CLR	R5			; no digits printed yet
+10$:	CLR	R1
+20$:	CMP	R0, (R2)
+	BLO	30$
+	SUB	(R2), R0
+	INC	R1
+	BR	20$
+30$:	TST	R1
+	BNE	40$
+	TST	R5
+	BNE	40$
+	MOVB	#' , (R4)+		; leading zero: a space
+	BR	50$
+40$:	MOV	#1, R5
+	ADD	#'0, R1
+	MOVB	R1, (R4)+
+50$:	TST	(R2)+
+	CMP	R2, #HDTABE
+	BNE	10$
+	ADD	#'0, R0			; the unit digit
+	MOVB	R0, (R4)+
+	CLRB	(R4)+			; the terminator
+	MOV	#<SCREEN+<TILEH*LINEW>+HUD_COL+5.>, (R4)+
+	MOV	#7, (R4)+
+	MOV	#2, (R4)+
+	CLR	R0
+	BISB	Lfd36_hours, R0
+	CALL	HBDIG2
+	MOVB	#'., (R4)+
+	CLR	R0
+	BISB	Lfd35_minutes, R0
+	CALL	HBDIG2
+	CLRB	(R4)+			; the terminator
+	RETURN
+
+; Two digits of R0 (0..99) with the leading zero to the buffer at R4 (as bytes)
+HBDIG2:	CLR	R1
+10$:	CMP	R0, #10.
+	BLO	20$
+	SUB	#10., R0
+	INC	R1
+	BR	10$
+20$:	ADD	#'0, R1
+	MOVB	R1, (R4)+
+	ADD	#'0, R0
+	MOVB	R0, (R4)+
+	RETURN
+
+HDTAB:	.WORD	10000., 1000., 100., 10.
+HDTABE:
 
 ; Strings of the counts of one player: R5 = counts (7 bytes + the number of robots), HSCR = screen
 ; address of the first digit, HSCR2 = screen address of the number of robots.
@@ -132,6 +202,6 @@ HFILL:	.WORD	0
 HSCR:	.WORD	0
 HSCR2:	.WORD	0
 HCNT:	.WORD	0
-HUDBUF:	.BLKW	<7+7+1+7+1>*5+1		; at most 5 words per number
+HUDBUF:	.BLKW	<<7+7+1+7+1>*5>+1+6+6	; at most 5 words per number, 6 words for the day and the time
 
 ; End of NEHUD.MAC

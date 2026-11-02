@@ -1,5 +1,5 @@
 ; Start of NERNDR.MAC
-; Isometric renderer: draws the map, objects and the player into the frame buffer FRBUF.
+; Isometric renderer: draws the map, objects and the player into the frame buffer RNDBUF.
 ; Hand translation of the Z80 code at ZX Ld71 (see the disassembly); labels keep the ZX address.
 ;
 ; Register mapping used in this file (as in docs/Z80-to-PDP11.md):
@@ -28,12 +28,12 @@ RBPIECE:			.WORD	0	; robot piece being drawn, 0..7
 ; Clears the frame buffer, draws the basic map frame (the two diagonal cut-out patterns).
 Lcfd7_draw_blank_map_in_buffer:
 ; Lcffe: clear the buffer
-	MOV	#FRBUF, R0
+	MOV	#RNDBUF, R0
 	MOV	#<VIEW_BYTES/2>, R1
 10$:	CLR	(R0)+
 	SOB	R1, 10$
 ; Ld026: draw the top left diagonal black part, 5 blocks of 8 lines with 10, 8, 6, 4, 2 bytes filled
-	MOV	#FRBUF, R0
+	MOV	#RNDBUF, R0
 	MOV	#<VIEW_W/2>, R1		; bytes filled in a line
 	MOV	#5, R4
 20$:	MOV	#8., R3
@@ -48,15 +48,15 @@ Lcfd7_draw_blank_map_in_buffer:
 ; the pixel level edges
 	MOV	#Ld6a8_diagonal_pattern1, R0
 	MOV	#6, R1
-	MOV	#<FRBUF+<VIEW_W/2>>, R2
+	MOV	#<RNDBUF+<VIEW_W/2>>, R2
 	CALL	Ld057_draw_diagonal_line	; top left edge of the map
 	MOV	#Ld6a8_diagonal_pattern1, R0
 	MOV	#3, R1
-	MOV	#<FRBUF+<136.*VIEW_W>+VIEW_W-2>, R2
+	MOV	#<RNDBUF+<136.*VIEW_W>+VIEW_W-2>, R2
 	CALL	Ld057_draw_diagonal_line	; first part of the bottom right edge
 	MOV	#Ld6b8_diagonal_pattern2, R0
 	MOV	#4, R1
-	MOV	#<FRBUF+<128.*VIEW_W>+VIEW_W-2>, R2
+	MOV	#<RNDBUF+<128.*VIEW_W>+VIEW_W-2>, R2
 					; second part of the bottom right edge
 
 ; Draws a diagonal line pattern: R0 = source (16 bytes), R1 = repetitions, R2 = destination.
@@ -522,11 +522,11 @@ Lcf2d_draw_sprite_to_buffer:
 45$:	SUB	#2, R0
 	DEC	R5
 	BNE	45$
-; buffer pointer = FRBUF + h * VIEW_W + x
+; buffer pointer = RNDBUF + h * VIEW_W + x
 50$:	MOV	R4, R5
 	MUL	#VIEW_W, R5
 	ADD	R3, R5
-	ADD	#FRBUF, R5
+	ADD	#RNDBUF, R5
 	MOV	R5, SPROWD
 	MOV	Lcfaf_left_pixel_skip, R5
 	ASL	R5
@@ -542,7 +542,7 @@ Lcf2d_draw_sprite_to_buffer:
 	BISB	(R0)+, (R3)+
 	SOB	R4, 70$
 	SUB	#VIEW_W, SPROWD
-	CMP	SPROWD, #FRBUF
+	CMP	SPROWD, #RNDBUF
 	BLO	90$			; out of the buffer
 	DEC	R1
 	BNE	60$

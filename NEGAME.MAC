@@ -93,14 +93,19 @@ DECOR_STRUCT_TYPE = 2	; byte 3 is padding
 ;------------------------------------------------------------------------------
 ; The state block. Labels keep the ZX address of the original.
 
+.IF DF NOMENU
 .IF NDF NOSNAP
-.INCLUDE /NESNAP.MAC/			; the same block with the data of a snapshot (tools/conv_snap.py)
+USESNAP = 1
+.ENDC
+.ENDC
+.IF DF USESNAP
+.INCLUDE /NESNAP.MAC/			; the same block with the data of a snapshot (tools/conv_snap.py), test builds only
 .IFF
 ; The layout with empty data. Used to check NESNAP.MAC (assemble with -s "NOSNAP=1").
 	.EVEN
 GSTATE:
 ; Words
-Lfd00_random_seed:	.WORD	12345., 0	; 4 bytes in the original; the random generator design is open
+Lfd00_random_seed:	.WORD	12345., 12345.	; 4 bytes, the seed of the random generator (Ld358_random)
 Lfd06_scroll_ptr:	.WORD	0		; map offset of the left column of the view
 Lfd0a_scroll_x:		.WORD	0
 Lfd0e_player_x:		.WORD	0		; long axis of the map
@@ -119,7 +124,7 @@ Lfd36_hours:		.BYTE	0
 Lfd39_current_in_game_right_hud:	.BYTE	0
 Lfd51_robot_player_or_enemy:	.BYTE	0	; 0: player, 1: enemy AI
 Lfd52_update_radar_buffer_signal:	.BYTE	0	; 1: update the radar buffers this cycle
-	.BYTE	0				; padding
+Ld370_random_index:	.BYTE	0		; the index of the last output of the random generator
 ; Resources and counts, 7 bytes each (+1 byte padding)
 Lfd22_player1_resource_counts:	.BLKB	8.
 Lfd4a_player2_resource_counts:	.BLKB	8.

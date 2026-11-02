@@ -11,8 +11,12 @@
 .MACRO	PPUCMD	X
 	MOV	X, @#PPUCOM
 .ENDM
-; Set PPU command and wait for acknowledgement
+; Set PPU command and wait for acknowledgement. First waits until the PPU has finished the previous command
+; (DRTIME posts a command without waiting): otherwise the PPU would overwrite the new command with its
+; acknowledgement of the old one.
 .MACRO	PPUCMW	X
+	TST	@#PPUCOM
+	BNE	.-4
 	MOV	X, @#PPUCOM
 	TST	@#PPUCOM
 	BNE	.-4
@@ -48,6 +52,8 @@ VIEW_BYTES = VIEW_W*VIEW_H	; Frame buffer size, bytes
 RADAR_ROW = 23.			; Radar position on screen: tile row and column (128x16 pixels)
 RADAR_COL = VIEW_COL+5
 RADAR_SCR = SCREEN + <RADAR_ROW*TILEH*LINEW> + RADAR_COL
+RADAR_EVERY = 4			; The PPU redraws the radar once in so many passes of its main loop (drawing it takes
+				; as long as the whole game area, ~95 ms)
 HUD_COL = VIEW_COL+VIEW_W+2	; Right panel (status), tile column; the frame ends at VIEW_COL+VIEW_W
 VIEW_SCR = SCREEN + <VIEW_ROW*TILEH*LINEW> + VIEW_COL	; Screen address of the game area
 
@@ -83,6 +89,9 @@ CMDSTR =: 2		; Print string: PPUDAT = CPU address of a block (even):
 	;   .WORD screen address, ink color, paper color index; then string bytes, zero terminated
 CMDSTS =: 4		; Print a list of strings: PPUDAT = CPU address of the list (even): blocks of CMDSTR
 			; one after another, the list ends with a zero word
+CMDGAME =: 5		; Switch the PPU to the game mode: the game area and the radar are drawn
+CMDMENU =: 6		; Switch the PPU to the menu mode: the game area and the radar are not drawn
+CMDCLS =: 7		; Clear the screen
 CMDFRM =: 3		; Draw the frame: PPUDAT = CPU address of a block (even):
 	;   .WORD screen address of the top left tile, width (tiles), height (tile rows), ink color, paper color index
 
@@ -264,6 +273,8 @@ PPSTA:
 	MOV	#200, @#102
 ;
 	CLR	VPASS			; PPU variables are not initialized by the loader
+	CLR	PMODE			; the menu mode
+	MOV	#1, RDCNT		; draw the radar in the first pass
 	CLR	VTICK
 	CLR	VROW
 	CLR	VCPUA
@@ -273,10 +284,15 @@ PDONE:
 	MTPS	#0
 	MOV	#<PPUCOM/2>, @#177010	; ackn of command execution
 	CLR	@#177014
-; Main loop of the PPU procedure
+; Main loop of the PPU procedure. Two modes (PMODE): the menu mode (at the start) and the game mode
+; (command CMDGAME). In the menu mode the game area and the radar are not drawn, the screen is
+; free for the texts.
 ; Order: game area -> radar -> command from CPU -> sound tick
-PMAIN:	CALL	DRVIEW			; game area (stage 1: continuous copy from CPU buffer)
+PMAIN:	TST	PMODE
+	BEQ	10$			; menu mode
+	CALL	DRVIEW			; game area (stage 1: continuous copy from CPU buffer)
 	CALL	DRRADR			; radar
+10$:
 	MOV	#<PPUCOM/2>, @#177010	; get command from CPU
 	MOV	@#177014, R0
 	BMI	PEXIT			; exit PPU command
@@ -288,7 +304,10 @@ PMAIN:	CALL	DRVIEW			; game area (stage 1: continuous copy from CPU buffer)
 	JMP	PPRINT			; 2 - print string
 	JMP	PFRAME			; 3 - draw the frame
 	JMP	PPRSTS			; 4 - print a list of strings
-	;TODO commands: fill attributes, blit, nuke effect, clear screen, music
+	JMP	PGAME			; 5 - game mode
+	JMP	PMENU			; 6 - menu mode
+	JMP	PCLS			; 7 - clear the screen
+	;TODO commands: fill attributes, blit, nuke effect, music
 ; Exit command
 PEXIT:	MTPS	#200
 ; report measurements to CPU
@@ -360,8 +379,12 @@ KEYINT:	MOV	@#177010, -(SP)
 	BIC	#<PKEYUP+PKEYDN>, @#177014
 	BR	90$
 53$:	CMP	R0, #^B0101		; shift
-	BNE	90$
+	BNE	54$
 	BIC	#PKEYFR, @#177014
+	BR	90$
+54$:	CMP	R0, #^B0100		; STOP (the main menu is shown again after STOP: the key must be released)
+	BNE	90$
+	BIC	#PKEYST, @#177014
 ; exit interrupt
 90$:	MOV	(SP)+, R0
 	MOV	(SP)+, @#177010
@@ -538,6 +561,14 @@ DRCHAR:	SUB	#FONTFC, R2
 	INC	R1
 	RETURN
 
+; Commands: the mode of the PPU, clear the screen
+PGAME:	MOV	#1, PMODE
+	JMP	PDONE
+PMENU:	CLR	PMODE
+	JMP	PDONE
+PCLS:	CALL	PCLSCR
+	JMP	PDONE
+
 ; Command: draw the frame around the game area: 1 pixel black line, 6 pixels of paper, 1 pixel black
 ; line (as the white frame of the original). Parameter block in CPU memory, address in PPUDAT:
 ; screen address of the top left tile, width (tiles), height (tile rows), ink, paper index.
@@ -641,7 +672,10 @@ FRBOT:	.BYTE	203,377,301
 ; (view 1, view 2): (0,0) blue, (1,0) cyan (the robots of the player), (0,1) yellow (the enemy
 ; robots), (1,1) white (the buildings). The ink is white, so the pixels of both views are drawn by
 ; the ink and the paper is calculated for each pixel (4 bits of the color per pixel).
-DRRADR:	MOV	#177010, R4		; mem index
+DRRADR:	DEC	RDCNT
+	BNE	90$			; not now
+	MOV	#RADAR_EVERY, RDCNT
+	MOV	#177010, R4		; mem index
 	MOV	#177014, R5		; mem data
 	MOV	#177024, R3		; pix data
 	MOV	#<PPURAD/2>, (R4)
@@ -756,8 +790,12 @@ PCLSCR:
 	SOB	R0, 10$
 	RETURN
 
-; 50Hz tick
+; 50Hz tick: counts ticks and passes the count to the CPU (PPUTCK) at once, so the CPU can measure time
 VSYINT:	INC	VTICK
+	MOV	@#177010, -(SP)
+	MOV	#<PPUTCK/2>, @#177010
+	MOV	VTICK, @#177014
+	MOV	(SP)+, @#177010
 	RTI
 
 ; Start to play sound; R0 = sound number multiplied by 4. TODO: sound design undecided
@@ -775,6 +813,8 @@ COLTBL:	.WORD	^B0000000000000000, ^B0000000000000000
 
 .INCLUDE /NEFONT.MAC/			; The font lives in the PPU block (PPU RAM)
 
+PMODE:	.WORD	0			; 0 = menu mode, 1 = game mode
+RDCNT:	.WORD	0			; DRRADR: passes left to the next drawing
 RDBUF:	.WORD	0			; DRRADR: radar buffers, CPU word address
 RDE4P:	.WORD	0			; DRRADR: address of RDE4
 RDSCR:	.WORD	0			; DRRADR: screen address of the current line
@@ -862,6 +902,7 @@ PPSEND:	MOV	#PPBADR, R0
 STARTC::
 .INCLUDE /NECORE.MAC/
 .INCLUDE /NESPRT.MAC/
+.INCLUDE /NEMAP.MAC/
 .INCLUDE /NERNDR.MAC/
 .INCLUDE /NERADR.MAC/
 .INCLUDE /NEHUD.MAC/
