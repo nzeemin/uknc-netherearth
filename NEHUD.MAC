@@ -1,0 +1,137 @@
+; Start of NEHUD.MAC
+; The right panel ("STATUS") next to the game area: texts and numbers, drawn by the PPU as a list of
+; strings (CMDSTS). Layout and colors are from the Z80 code Ld1e5_draw_in_game_right_hud and
+; Ld293_update_stats_in_right_hud; the panel is 10 characters wide, row = row of the ZX screen.
+; Colors: 3-bit GRB indices (1 blue, 2 red, 4 green, 5 cyan, 6 yellow, 7 white).
+
+; A string of the panel: row, column in the panel, ink, paper, text
+.MACRO	HSTR	ROW, COL, INK, PAPER, TEXT
+	.WORD	SCREEN+<ROW*TILEH*LINEW>+HUD_COL+COL, INK, PAPER
+	.ASCIZ	/TEXT/
+	.EVEN
+.ENDM
+
+; The static part
+HUDTAB:
+	HSTR	0., 0., 7, 2, < DAY:>
+	HSTR	1., 0., 7, 2, <TIME:>
+	HSTR	3., 0., 6, 0, <  STATUS>
+	HSTR	4., 0., 6, 0, <INSG  HUMN>
+	HSTR	6., 1., 5, 0, <WARBASES>
+	HSTR	7., 1., 5, 0, <ELECTR'S>
+	HSTR	8., 1., 5, 0, <NUCLEAR>
+	HSTR	9., 1., 5, 0, <PHASERS>
+	HSTR	10., 1., 5, 0, <MISSILES>
+	HSTR	11., 1., 5, 0, < CANNON>
+	HSTR	12., 1., 5, 0, <CHASSIS>
+	HSTR	13., 1., 5, 0, < ROBOTS>
+	HSTR	15., 1., 6, 0, <RESOURCES>
+	HSTR	17., 1., 4, 0, <GENERAL>
+	HSTR	18., 1., 4, 0, <ELECTR'>
+	HSTR	19., 1., 4, 0, <NUCLEAR>
+	HSTR	20., 1., 4, 0, <PHASERS>
+	HSTR	21., 1., 4, 0, <MISSILE>
+	HSTR	22., 1., 4, 0, <CANNON>
+	HSTR	23., 1., 4, 0, <CHASSIS>
+; "RADAR:" under the game area, double height (control code 4, '2'), two tile rows
+	.WORD	SCREEN+<23.*TILEH*LINEW>+<VIEW_COL-1>, 5, 0
+	.BYTE	4, '2
+	.ASCIZ	/RADAR:/
+	.EVEN
+	.WORD	0
+
+; Draw the panel: the static texts, then the numbers from the game state
+DRHUD:	PPUSTS	HUDTAB
+	CALL	HUDDYN
+	PPUSTS	HUDBUF
+	RETURN
+
+; Builds the strings with the numbers of the panel in HUDBUF
+HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
+; the resources of the player: 7 numbers, rows 17..23, columns 8..9
+	MOV	#2, HDIGS
+	MOV	#' , HFILL
+	MOV	#Lfd22_player1_resource_counts, R5
+	MOV	#<SCREEN+<17.*TILEH*LINEW>+HUD_COL+8.>, HSCR
+	MOV	#7, HCNT
+10$:	CLR	R0
+	BISB	(R5)+, R0
+	MOV	HSCR, R1
+	MOV	#6, R2
+	MOV	#1, R3
+	CALL	HBNUM
+	ADD	#<TILEH*LINEW>, HSCR
+	DEC	HCNT
+	BNE	10$
+; warbases and factories of the enemy (column 0) and of the player (column 9), 7 digits each, rows 6..12,
+; then the number of robots, rows 13
+	MOV	#Lfd42_p2_base_factory_counts, R5
+	MOV	#<SCREEN+<6.*TILEH*LINEW>+HUD_COL>, HSCR
+	MOV	#<SCREEN+<13.*TILEH*LINEW>+HUD_COL>, HSCR2
+	CALL	HBCNTS
+	MOV	#Lfd3a_p1_base_factory_counts, R5
+	MOV	#<SCREEN+<6.*TILEH*LINEW>+HUD_COL+9.>, HSCR
+	MOV	#<SCREEN+<13.*TILEH*LINEW>+HUD_COL+8.>, HSCR2
+	CALL	HBCNTS
+	CLR	(R4)+			; the end of the list
+	RETURN
+
+; Strings of the counts of one player: R5 = counts (7 bytes + the number of robots), HSCR = screen
+; address of the first digit, HSCR2 = screen address of the number of robots.
+HBCNTS:	MOV	#1, HDIGS
+	MOV	#7, HCNT
+10$:	CLR	R0
+	BISB	(R5)+, R0
+	MOV	HSCR, R1
+	MOV	#7, R2
+	CLR	R3
+	CALL	HBNUM
+	ADD	#<TILEH*LINEW>, HSCR
+	DEC	HCNT
+	BNE	10$
+	MOV	#2, HDIGS
+	MOV	#'0, HFILL
+	CLR	R0
+	BISB	(R5)+, R0
+	MOV	HSCR2, R1
+	MOV	#7, R2
+	CLR	R3
+	CALL	HBNUM
+	RETURN
+
+; Appends a string block with a number to the buffer at R4: R0 = value (0..99), R1 = screen address,
+; R2 = ink, R3 = paper index; HDIGS = number of digits (1 or 2), HFILL = the character for the
+; leading zero of two digits. Clobbers R0-R3, advances R4.
+HBNUM:	MOV	R1, (R4)+
+	MOV	R2, (R4)+
+	MOV	R3, (R4)+
+	CLR	R1			; tens
+10$:	CMP	R0, #10.
+	BLO	20$
+	SUB	#10., R0
+	INC	R1
+	BR	10$
+20$:	ADD	#'0, R0			; the unit digit
+	CMP	HDIGS, #2
+	BLO	40$			; one digit: the terminator is in the high byte
+	SWAB	R0
+	TST	R1
+	BNE	30$
+	MOV	HFILL, R1		; no tens: the filler
+	BR	35$
+30$:	ADD	#'0, R1
+35$:	BIS	R1, R0			; the tens digit in the low byte, the unit digit in the high byte
+	MOV	R0, (R4)+
+	CLR	(R4)+			; the terminator
+	RETURN
+40$:	MOV	R0, (R4)+
+	RETURN
+
+HDIGS:	.WORD	0
+HFILL:	.WORD	0
+HSCR:	.WORD	0
+HSCR2:	.WORD	0
+HCNT:	.WORD	0
+HUDBUF:	.BLKW	<7+7+1+7+1>*5+1		; at most 5 words per number
+
+; End of NEHUD.MAC

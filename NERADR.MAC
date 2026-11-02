@@ -1,0 +1,132 @@
+; Start of NERADR.MAC
+; The radar buffers: 128 x 16 map cells, one bit per cell, 16 bytes per row, 16 rows. Hand translation
+; of the Z80 code at ZX Ld5f8 (Ld5f8_update_radar_buffers, Ld65a_flip_2x2_radar_area, Ld67d).
+; View 1 has the buildings and the robots of the player, view 2 the buildings and the enemy robots.
+; Bit 0 of a byte is the leftmost cell (the original has bit 7: ZX order).
+
+; Both views are one block: view 2 follows view 1
+Ld800_radar_view1:	.BLKB	256.
+Ld900_radar_view2:	.BLKB	256.
+
+RADROW:	.WORD	0			; row counter
+
+; Update the radar view if necessary: rebuild the buffers if the signal is set, then the player
+; (blinking in view 1).
+Lb029_update_radar_view:
+	TSTB	Lfd52_update_radar_buffer_signal
+	BEQ	Lb036_flicker_player_in_radar
+	CALL	Ld5f8_update_radar_buffers
+	CLRB	Lfd52_update_radar_buffer_signal
+; Flips the player in the radar view 1 if it is visible now (the least significant bit of the variable)
+Lb036_flicker_player_in_radar:
+	BITB	#1, Lfd1e_player_visible_in_radar
+	BEQ	10$
+	MOV	Lfd0e_player_x, R0
+	CLR	R1
+	BISB	Lfd0d_player_y, R1
+	CLR	R2
+	CALL	Ld65a_flip_2x2_radar_area
+10$:	RETURN
+
+; Updates the two radar buffers with all the buildings and robots in the map.
+Ld5f8_update_radar_buffers:
+	MOV	#Ld800_radar_view1, R4	; buffer pointer
+	MOV	Lfd1c_radar_scroll_x, R2	; map offset of the first cell of the first row
+	MOV	#16., RADROW
+10$:	MOV	R2, R3			; map pointer
+	MOV	#16., R1		; bytes in a row
+20$:	.REPT	8.
+	MOVB	Ldd00_map(R3), R0
+	INC	R3
+	BIC	#177740, R0		; type of the map element
+	CMP	#14., R0		; C = 1 if the element is a building: type >= 15 (as in the original code)
+	RORB	R5			; the first cell ends up in bit 0 after 8 steps
+	.ENDR
+	MOVB	R5, (R4)+
+	DEC	R1
+	BNE	20$
+	ADD	#1000, R2		; y++
+	DEC	RADROW
+	BNE	10$
+; Sync both views: the enemy view starts as a copy of the first one
+	MOV	#Ld800_radar_view1, R0
+	MOV	#Ld900_radar_view2, R1
+	MOV	#<256./2>, R2
+30$:	MOV	(R0)+, (R1)+
+	SOB	R2, 30$
+; Update robots in the radar views
+	MOV	#Lda00_player1_robots, R5
+	MOV	#<MAX_ROBOTS_PER_PLAYER*2>, -(SP)
+40$:	CMP	(R5), #NOSLOT
+	BEQ	50$			; no robot in this struct
+	CMPB	ROBOT_STRUCT_CONTROL(R5), #ROBOT_CONTROL_DIRECT_CONTROL
+	BEQ	50$			; the robot controlled by the player is not drawn
+	MOV	ROBOT_STRUCT_X(R5), R0	; x
+	CLR	R1
+	BISB	ROBOT_STRUCT_Y(R5), R1	; y
+	CLR	R2			; view: 0 = the robot of the player, 1 = an enemy robot
+	TSTB	ROBOT_STRUCT_CONTROL(R5)
+	BPL	45$
+	INC	R2
+45$:	MOV	R5, -(SP)
+	CALL	Ld65a_flip_2x2_radar_area
+	MOV	(SP)+, R5
+50$:	ADD	#ROBOT_STRUCT_SIZE, R5
+	DEC	(SP)
+	BNE	40$
+	TST	(SP)+
+	RETURN
+
+; Flips a 2x2 area of cells in a radar view: R0 = x coordinate, R1 = y coordinate, R2 = the view
+; (0 or 1). Clobbers R0-R5.
+Ld65a_flip_2x2_radar_area:
+	SUB	Lfd1c_radar_scroll_x, R0
+	CMP	R0, #127.
+	BHIS	90$			; x - scroll is not in 0..126: outside of the radar
+	MOV	#Ld800_radar_view1, R3
+	TST	R2
+	BEQ	10$
+	ADD	#256., R3
+10$:	MOV	R0, R4
+	ASR	R4
+	ASR	R4
+	ASR	R4			; byte in the row
+	MOV	R1, R5
+	ASL	R5
+	ASL	R5
+	ASL	R5
+	ASL	R5			; row * 16
+	ADD	R5, R4
+	ADD	R3, R4			; R4 = pointer to the byte
+	MOV	R0, R5
+	BIC	#177770, R5		; cell in the byte
+	MOV	#1, R0
+	ASH	R5, R0			; R0 = the bit of the cell
+	MOV	R4, -(SP)
+	MOV	R0, -(SP)
+	CALL	Ld65a_flip_two_cells	; the first row
+	MOV	(SP)+, R0
+	MOV	(SP)+, R4
+	SUB	R3, R4
+	SUB	#16., R4
+	BIC	#177400, R4		; the previous row, wrapping inside of the 256 bytes of the view
+	ADD	R3, R4
+	CALL	Ld65a_flip_two_cells
+90$:	RETURN
+
+; Flips the cell R0 (a bit) in the byte R4 and the next cell to the right
+Ld65a_flip_two_cells:
+	MOVB	(R4), R5
+	XOR	R0, R5
+	MOVB	R5, (R4)
+	ASL	R0
+	BIT	#400, R0
+	BEQ	10$			; the next cell is in the same byte
+	MOV	#1, R0			; the first cell of the next byte
+	INC	R4
+10$:	MOVB	(R4), R5
+	XOR	R0, R5
+	MOVB	R5, (R4)
+	RETURN
+
+; End of NERADR.MAC

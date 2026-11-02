@@ -1,0 +1,168 @@
+; Start of NEGAME.MAC
+; Game state in the UKNC layout: one contiguous block GSTATE..GSEND, so a snapshot/save is a plain dump
+; of GS_SIZE bytes. Same fields and order of values as the Z80 original (see the notes in the
+; disassembly), but:
+;  - structures are word aligned: bullet 10 bytes (was 9), building 6 (was 5), decoration 4 (was 3);
+;    the added bytes are padding at the end of the structure;
+;  - pointers into the map are offsets 0..8191 from Ldd00_map (offset = y*MAP_LENGTH + x), not Z80 addresses;
+;    a free robot/bullet slot has -1 in the pointer word (the original used 0 in the first byte);
+;  - ZX-only variables are dropped (script, interrupt, music, stack, keyboard state, title color,
+;    resource buffer, deferred player coordinates, 24 unused bytes), the radar buffers are not part
+;    of the state (rebuilt from the state, see Lfd52_update_radar_buffer_signal).
+; The converter for ZX snapshots (tools) must follow this layout.
+
+; Game constants (as in the original)
+INITIAL_PLAYER_RESOURCES = 20.
+MAX_ROBOTS_PER_PLAYER = 24.
+MAX_BULLETS = 5.
+N_WARBASES = 4.
+N_FACTORIES = 24.
+BUILDING_CAPTURE_TIME = 144.
+MIN_INTERRUPTS_PER_GAME_CYCLE = 10.	; game maximum speed is 5 frames per second
+MAX_PLAYER_ALTITUDE = 48.
+MIN_PLAYER_X = 14.
+MAX_PLAYER_X = 501.
+MAP_LENGTH = 512.			; x coordinate
+MAP_WIDTH = 16.				; y coordinate
+MAP_SIZE = MAP_LENGTH*MAP_WIDTH		; 8192. bytes
+
+ORDERS_STOP_AND_DEFEND = 0
+ORDERS_ADVANCE = 1
+ORDERS_RETREAT = 2
+ORDERS_DESTROY_ENEMY_ROBOTS = 3
+ORDERS_DESTROY_ENEMY_FACTORIES = 4
+ORDERS_DESTROY_ENEMY_WARBASES = 5
+ORDERS_CAPTURE_NEUTRAL_FACTORIES = 6
+ORDERS_CAPTURE_ENEMY_FACTORIES = 7
+ORDERS_CAPTURE_ENEMY_WARBASES = 8.
+
+ROBOT_CONTROL_AUTO = 0
+ROBOT_CONTROL_PLAYER_LANDED = 1
+ROBOT_CONTROL_DIRECT_CONTROL = 2
+ROBOT_CONTROL_ENEMY_AI = 128.
+
+WEAPON_RANGE_DEFAULT = 5
+WEAPON_RANGE_MISSILES = 7
+
+; Map byte: dcbaaaaa
+;  aaaaa = element type; b = not the bottom left corner of a 2x2 element;
+;  c = robot/factory/warbase here; d = player here
+MAPB_TYPE = 037
+MAPB_NOT_CORNER = 040
+MAPB_OCCUPIED = 100
+MAPB_PLAYER = 200
+
+NOSLOT = -1				; Free slot marker in the map pointer word of robots and bullets
+
+; Structures. Offsets are the same as in the original, except the pointer which is a word map offset.
+ROBOT_STRUCT_SIZE = 16.
+ROBOT_STRUCT_MAP_PTR = 0		; word, map offset, NOSLOT when there is no robot in this struct
+ROBOT_STRUCT_X = 2			; word
+ROBOT_STRUCT_Y = 4
+ROBOT_STRUCT_DESIRED_DIRECTION = 5
+ROBOT_STRUCT_KEEP_WALKING_STEPS = 6	; ROBOT_STRUCT_NUMBER_OF_STEPS_TO_KEEP_WALKING
+ROBOT_STRUCT_PIECES = 7
+ROBOT_STRUCT_DIRECTION = 8.		; one-hot: 01, 02, 04, 10
+ROBOT_STRUCT_HEIGHT = 9.
+ROBOT_STRUCT_CONTROL = 10.
+ROBOT_STRUCT_ORDERS = 11.
+ROBOT_STRUCT_STRENGTH = 12.
+ROBOT_STRUCT_ALTITUDE = 13.
+ROBOT_STRUCT_ORDERS_ARGUMENT = 14.	; # of miles, target robot index, etc.
+ROBOT_STRUCT_CYCLES_TO_UPDATE = 15.	; ROBOT_STRICT_CYCLES_TO_NEXT_UPDATE
+
+BULLET_STRUCT_SIZE = 10.
+BULLET_STRUCT_MAP_PTR = 0		; word, map offset, NOSLOT when there is no bullet in this struct
+BULLET_STRUCT_X = 2			; word
+BULLET_STRUCT_Y = 4
+BULLET_STRUCT_DIRECTION = 5
+BULLET_STRUCT_RANGE = 6
+BULLET_STRUCT_TYPE = 7			; 1: cannon, 2: missiles, 3: phasers
+BULLET_STRUCT_ALTITUDE = 8.		; byte 9 is padding
+
+BUILDING_STRUCT_SIZE = 6
+BUILDING_STRUCT_X = 0			; word
+BUILDING_STRUCT_Y = 2
+BUILDING_STRUCT_TYPE = 3		; type + owner (bit 6 player 1, bit 5 player 2); bit 7 = destroyed
+BUILDING_STRUCT_TIMER = 4		; time the building is occupied by a robot; byte 5 is padding
+
+DECOR_STRUCT_SIZE = 4
+DECOR_STRUCT_MAP_PTR = 0	; word, map offset
+DECOR_STRUCT_TYPE = 2	; byte 3 is padding
+
+;------------------------------------------------------------------------------
+; The state block. Labels keep the ZX address of the original.
+
+.IF NDF NOSNAP
+.INCLUDE /NESNAP.MAC/			; the same block with the data of a snapshot (tools/conv_snap.py)
+.IFF
+; The layout with empty data. Used to check NESNAP.MAC (assemble with -s "NOSNAP=1").
+	.EVEN
+GSTATE:
+; Words
+Lfd00_random_seed:	.WORD	12345., 0	; 4 bytes in the original; the random generator design is open
+Lfd06_scroll_ptr:	.WORD	0		; map offset of the left column of the view
+Lfd0a_scroll_x:		.WORD	0
+Lfd0e_player_x:		.WORD	0		; long axis of the map
+Lfd1c_radar_scroll_x:	.WORD	0
+Lfd37_days:		.WORD	0
+; Bytes (pairs keep word alignment)
+Lfd0d_player_y:		.BYTE	0		; narrow axis of the map
+Lfd10_player_altitude:	.BYTE	0
+Lfd1b_radar_scroll_x_tile:	.BYTE	0	; same as Lfd1c_radar_scroll_x, at tile resolution
+Lfd1e_player_visible_in_radar:	.BYTE	0	; bit 0, player blinking
+Lfd1f_cursor_position:	.BYTE	0, 0		; x, y
+Lfd21_constr_selected_pieces:	.BYTE	0
+Lfd30_player_elevate_timer:	.BYTE	0	; > 0: player ship elevates automatically
+Lfd35_minutes:		.BYTE	0
+Lfd36_hours:		.BYTE	0
+Lfd39_current_in_game_right_hud:	.BYTE	0
+Lfd51_robot_player_or_enemy:	.BYTE	0	; 0: player, 1: enemy AI
+Lfd52_update_radar_buffer_signal:	.BYTE	0	; 1: update the radar buffers this cycle
+	.BYTE	0				; padding
+; Resources and counts, 7 bytes each (+1 byte padding)
+Lfd22_player1_resource_counts:	.BLKB	8.
+Lfd4a_player2_resource_counts:	.BLKB	8.
+Lfd3a_p1_base_factory_counts:	.BLKB	7
+Lfd41_player1_robot_count:	.BYTE	0
+Lfd42_p2_base_factory_counts:	.BLKB	7
+Lfd49_player2_robot_count:	.BYTE	0
+
+; Bullets, 5 structs
+Ld7d3_bullets:
+	.REPT	MAX_BULLETS
+	.WORD	NOSLOT
+	.BLKB	BULLET_STRUCT_SIZE-2
+	.ENDR
+
+; Building decorations, 56 structs
+Lff01_building_decorations:
+	.BLKB	56.*DECOR_STRUCT_SIZE
+
+; Buildings: 4 warbases, then 24 factories
+Lfd70_warbases:
+	.BLKB	N_WARBASES*BUILDING_STRUCT_SIZE
+Lfd84_factories:
+	.BLKB	N_FACTORIES*BUILDING_STRUCT_SIZE
+
+; Robots of player 1 and player 2, 24 structs each
+Lda00_player1_robots:
+	.REPT	MAX_ROBOTS_PER_PLAYER
+	.WORD	NOSLOT
+	.BLKB	ROBOT_STRUCT_SIZE-2
+	.ENDR
+Ldb80_player2_robots:
+	.REPT	MAX_ROBOTS_PER_PLAYER
+	.WORD	NOSLOT
+	.BLKB	ROBOT_STRUCT_SIZE-2
+	.ENDR
+
+; Map, MAP_LENGTH x MAP_WIDTH, offset = y*MAP_LENGTH + x
+Ldd00_map:
+	.BLKB	MAP_SIZE
+GSEND:
+GS_SIZE = GSEND-GSTATE		; Size of the state block in bytes (snapshot/save size)
+.ENDC
+
+	.EVEN
+; End of NEGAME.MAC

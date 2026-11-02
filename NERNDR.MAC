@@ -1,0 +1,552 @@
+; Start of NERNDR.MAC
+; Isometric renderer: draws the map, objects and the player into the frame buffer FRBUF.
+; Hand translation of the Z80 code at ZX Ld71 (see the disassembly); labels keep the ZX address.
+;
+; Register mapping used in this file (as in docs/Z80-to-PDP11.md):
+;   A = R0, BC = R1, DE = R2, HL = R3, IX = R4 (scratch), IY = R5 (struct pointer)
+; Map pointers (HL, DE when it holds a map pointer) are map offsets 0..MAP_SIZE-1 (Z80: DD00 + offset).
+; "iso" coordinates (DE in the Z80 code) are kept as a word: d in the high byte, e in the low byte.
+; Z80 "inc h / inc h" (y++) is ADD #1000 (512), "dec h / dec h" is SUB #1000.
+;
+; Known deviations from the original:
+;  - geometry constants are the 20x160 window of the original (see PORTNOTES.md, "Window size");
+;  - the original reads garbage outside of the map (row -1 of the map is the robots area, row 16 is
+;    the variables); here these reads see whatever is at the same relative place of our state block.
+
+;------------------------------------------------------------------------------
+; Variables
+
+Lcf3f_sprite_elevation:		.WORD	0	; elevation of the sprite to draw (original: self-modifying operand)
+Lfd11_player_iso_if_deferred:	.WORD	0	; player iso coordinates if the rendering was deferred, else 0
+Lcfaf_left_pixel_skip:		.WORD	0	; bytes to skip from the left of the sprite rows
+SPSKIP:				.WORD	0	; ... doubled, bytes of sprite data to skip per row
+SPROWD:				.WORD	0	; frame buffer address of the current sprite row
+RBPIECE:			.WORD	0	; robot piece being drawn, 0..7
+
+;------------------------------------------------------------------------------
+
+; Clears the frame buffer, draws the basic map frame (the two diagonal cut-out patterns).
+Lcfd7_draw_blank_map_in_buffer:
+; Lcffe: clear the buffer
+	MOV	#FRBUF, R0
+	MOV	#<VIEW_BYTES/2>, R1
+10$:	CLR	(R0)+
+	SOB	R1, 10$
+; Ld026: draw the top left diagonal black part, 5 blocks of 8 lines with 10, 8, 6, 4, 2 bytes filled
+	MOV	#FRBUF, R0
+	MOV	#<VIEW_W/2>, R1		; bytes filled in a line
+	MOV	#5, R4
+20$:	MOV	#8., R3
+30$:	MOV	R1, R2
+40$:	MOVB	#377, (R0)+
+	SOB	R2, 40$
+	ADD	#VIEW_W, R0
+	SUB	R1, R0			; to the next line
+	SOB	R3, 30$
+	SUB	#2, R1
+	SOB	R4, 20$
+; the pixel level edges
+	MOV	#Ld6a8_diagonal_pattern1, R0
+	MOV	#6, R1
+	MOV	#<FRBUF+<VIEW_W/2>>, R2
+	CALL	Ld057_draw_diagonal_line	; top left edge of the map
+	MOV	#Ld6a8_diagonal_pattern1, R0
+	MOV	#3, R1
+	MOV	#<FRBUF+<136.*VIEW_W>+VIEW_W-2>, R2
+	CALL	Ld057_draw_diagonal_line	; first part of the bottom right edge
+	MOV	#Ld6b8_diagonal_pattern2, R0
+	MOV	#4, R1
+	MOV	#<FRBUF+<128.*VIEW_W>+VIEW_W-2>, R2
+					; second part of the bottom right edge
+
+; Draws a diagonal line pattern: R0 = source (16 bytes), R1 = repetitions, R2 = destination.
+; At each repetition we go down 8 lines and left 16 pixels.
+Ld057_draw_diagonal_line:
+10$:	MOV	R0, R3
+	MOV	#8., R4
+20$:	MOVB	(R3)+, (R2)+
+	MOVB	(R3)+, (R2)+
+	ADD	#<VIEW_W-2>, R2
+	SOB	R4, 20$
+	SUB	#2, R2
+	SOB	R1, 10$
+	RETURN
+
+;------------------------------------------------------------------------------
+
+; Renders the player and the map to the buffer
+Lccc6_draw_map_to_buffer:
+	CLR	Lfd11_player_iso_if_deferred	; the player rendering is not deferred
+; Draw the player shadow: e = player_x - scroll x (low byte), d = player_y, graphic 1
+	CLR	Lcf3f_sprite_elevation
+	MOV	Lfd0e_player_x, R0
+	MOV	Lfd06_scroll_ptr, R1
+	BIC	#177000, R1		; low 9 bits of the scroll pointer = scroll x
+	SUB	R1, R0
+	BIC	#177400, R0		; e
+	CLR	R2
+	BISB	Lfd0d_player_y, R2
+	SWAB	R2
+	BIS	R0, R2			; DE = d, e
+	MOV	#1, R0
+	CALL	Lcf2d_draw_sprite_to_buffer
+; Draw the visible part of the map. Each outer iteration is a diagonal row of the map.
+	MOV	Lfd06_scroll_ptr, R3
+	ADD	#32., R3
+	MOV	#32., R2		; d = 0, e = 32
+10$:	DEC	R3
+	DECB	R2			; e (8 bit)
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+20$:	TSTB	R2
+	BMI	30$			; e < 0: outside of the visible area, skip
+	MOVB	Ldd00_map(R3), R0
+	BEQ	30$
+	CALL	Lcd18_draw_map_cell	; there is something in the map, draw it
+30$:	ADD	#1001, R3		; y++, x++
+	ADD	#400, R2		; d++
+	INCB	R2			; e++
+	CMP	R2, #<16.*256.>
+	BHIS	40$			; 16 iterations done
+	CMPB	R2, #32.
+	BNE	20$			; reached the limit visible on the screen?
+40$:	MOVB	R2, R0
+	MOV	(SP)+, R2
+	MOV	(SP)+, R3
+	CMP	R0, #1
+	BNE	10$			; e == 1 after a row: nothing visible any more
+	RETURN
+
+; Draws whatever is in this map cell: map elements, robots, player, etc.
+; Input: R0 = map byte, R3 = map offset, R2 = iso coordinates. Preserves R2, R3.
+Lcd18_draw_map_cell:
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+	MOV	R0, -(SP)
+	BIT	#MAPB_NOT_CORNER, R0	; elements are 2x2, only the bottom left corner has bit 5 = 0
+	BNE	10$
+	BIC	#177740, R0		; map element type
+	BEQ	10$
+	CLR	Lcf3f_sprite_elevation
+	CALL	Lcf2d_draw_sprite_to_buffer
+10$:	MOV	(SP)+, R0
+	MOV	(SP)+, R2
+	MOV	(SP)+, R3
+	BIT	#MAPB_OCCUPIED, R0	; objects are marked with bit 6
+	BEQ	20$
+	CALL	Lce12_draw_object_to_map
+20$:	MOVB	Ldd00_map(R3), R0
+	BMI	30$			; the player is marked with bit 7
+	RETURN
+; Draw the player
+30$:	MOV	Lfd11_player_iso_if_deferred, R1
+	BNE	Lcd79_player_was_deferred
+; Check if there is a map element that would occlude the player sprite when it shouldn't,
+; and defer the player rendering if so. R2 (DE) = the map pointer where the player should be rendered.
+	MOV	R2, -(SP)		; iso
+	MOV	R3, R2
+	CALL	Lcd96_find_near_in_front
+	MOV	R3, -(SP)
+	DEC	R3
+	SUB	#1000, R3
+	CALL	Lcd90_find_in_front_if_marked
+	ADD	#1000, R3
+	CALL	Lcd90_find_in_front_if_marked
+	ADD	#1000, R3
+	CMP	R3, #MAP_SIZE
+	BGE	40$			; out of the map
+	CALL	Lcd90_find_in_front_if_marked
+	INC	R3
+	CALL	Lcd90_find_in_front_if_marked
+	INC	R3
+	CALL	Lcd90_find_in_front_if_marked
+40$:	MOV	(SP)+, R3
+	CMP	R2, R3
+	BNE	50$
+	MOV	(SP)+, R2		; iso
+	BR	Lcd81_render_player_push
+50$:	BISB	#MAPB_PLAYER, Ldd00_map(R2)	; mark the player at the deferred position
+	MOV	(SP)+, R2		; iso
+	MOV	R2, Lfd11_player_iso_if_deferred
+	RETURN
+
+Lcd79_player_was_deferred:
+	BICB	#MAPB_PLAYER, Ldd00_map(R3)	; remove the player mark from the deferred position
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+	MOV	R1, R2			; the correct iso coordinates (before it was deferred)
+	BR	Lcd83_render_player
+Lcd81_render_player_push:
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+Lcd83_render_player:
+	CLR	Lcf3f_sprite_elevation
+	BISB	Lfd10_player_altitude, Lcf3f_sprite_elevation
+	CLR	R0
+	CALL	Lcf2d_draw_sprite_to_buffer
+	MOV	(SP)+, R2
+	MOV	(SP)+, R3
+	RETURN
+
+; Sees if there is a map element that would be rendered on top of the object in R3, and
+; returns its map pointer in R2. Clobbers R0, R1.
+Lcd90_find_in_front_if_marked:
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BEQ	Lcd96_ret
+	CALL	Lcdbf_update_de_internal
+Lcd96_find_near_in_front:
+	MOV	R3, -(SP)
+	DEC	R3			; x -= 1
+	ADD	#1000, R3		; y += 1
+	CMP	R3, #MAP_SIZE
+	BGE	10$			; out of the map
+	CALL	Lcdb8_update_de_if_hl_in_front
+	INC	R3
+	CALL	Lcdb8_update_de_if_hl_in_front
+	DEC	R3
+10$:	SUB	#1000, R3		; y -= 1
+	CALL	Lcdb8_update_de_if_hl_in_front
+	INC	R3
+	INC	R3
+	ADD	#1000, R3		; x += 2, y += 1
+	CMP	R3, #MAP_SIZE
+	BGE	20$
+	CALL	Lcdb8_update_de_if_hl_in_front
+20$:	MOV	(SP)+, R3
+Lcd96_ret:
+	RETURN
+
+; Checks if there is a map element in R3 that is "in front" (rendered lower in the screen) of the
+; position pointed to by R2, and if so, overwrites R2 with R3. Clobbers R0, R1.
+Lcdb8_update_de_if_hl_in_front:
+	BITB	#MAPB_NOT_CORNER, Ldd00_map(R3)
+	BNE	Lcdbf_ret		; not the bottom left corner of an object
+	MOVB	Ldd00_map(R3), R0
+	BIC	#177740, R0
+	BEQ	Lcdbf_ret		; nothing in this map position
+Lcdbf_update_de_internal:
+	MOV	R2, R1
+	SUB	R3, R1
+	BIC	#177400, R1		; c = e - l, difference in x (low byte)
+	MOV	R2, R0
+	SWAB	R0
+	BIC	#177400, R0
+	ASR	R0			; (d - DD) / 2 = y of DE
+	MOV	R0, -(SP)
+	MOV	R3, R0
+	SWAB	R0
+	BIC	#177400, R0
+	ASR	R0			; y of HL
+	SUB	(SP)+, R0		; difference in y
+	ADD	R1, R0			; (hl.y - de.y) + (de.x - hl.x)
+	MOVB	R0, R0			; 8 bit result
+	BMI	Lcdbf_ret		; whatever is in DE is rendered "lower on the screen"
+	BNE	10$
+	MOVB	R1, R1			; the same row: c = difference in x
+	BPL	Lcdbf_ret		; DE has a higher x coordinate
+10$:	MOV	R3, R2
+Lcdbf_ret:
+	RETURN
+
+;------------------------------------------------------------------------------
+
+; Finds if there is a robot with the same map pointer as R3, returns it in R5.
+; Z: robot found, NZ: no robot found. Clobbers R1.
+Lcdd8_get_robot_at_ptr:
+	MOV	#Lda00_player1_robots, R5
+	MOV	#<MAX_ROBOTS_PER_PLAYER*2>, R1
+10$:	CMP	(R5), R3
+	BEQ	20$
+	ADD	#ROBOT_STRUCT_SIZE, R5
+	SOB	R1, 10$
+	INC	R1			; clear Z
+20$:	RETURN
+
+; Finds a decoration with the map pointer R3, returns it in R5. Z: found. Clobbers R1.
+Lcdf5_find_decoration_with_ptr:
+	MOV	#Lff01_building_decorations, R5
+	MOV	#56., R1
+10$:	CMP	(R5), R3
+	BEQ	20$
+	ADD	#DECOR_STRUCT_SIZE, R5
+	SOB	R1, 10$
+	INC	R1			; clear Z
+20$:	RETURN
+
+; See if there is an object (robot, decoration, bullet) at the map pointer R3 and draws it.
+; R2 = iso coordinates. Preserves R2, R3.
+Lce12_draw_object_to_map:
+	CALL	Lcdd8_get_robot_at_ptr
+	BEQ	Lce68_draw_robot_or_bullet	; if there is a robot, draw it
+	CALL	Lcdf5_find_decoration_with_ptr
+	BEQ	Lce38_draw_decoration
+	MOV	#Ld7d3_bullets, R5
+	MOV	#MAX_BULLETS, R1
+10$:	CMP	(R5), R3
+	BEQ	Lce68_draw_robot_or_bullet	; if there is a bullet, draw it
+	ADD	#BULLET_STRUCT_SIZE, R5
+	SOB	R1, 10$
+	RETURN
+
+; Draws a decoration (a flag, the "H" in a warbase, pieces on top of factories). R5 = decoration.
+Lce38_draw_decoration:
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+	CLR	R1
+	BISB	DECOR_STRUCT_TYPE(R5), R1
+	CLR	Lcf3f_sprite_elevation
+	BISB	Lce5f_decoration_elevations(R1), Lcf3f_sprite_elevation
+	CLR	R0
+	BISB	Lce56_decoration_sprites(R1), R0
+	CALL	Lcf2d_draw_sprite_to_buffer
+	MOV	(SP)+, R2
+	MOV	(SP)+, R3
+	RETURN
+
+Lce56_decoration_sprites:	.BYTE	054,050,045,043,040,035,027,052,053
+Lce5f_decoration_elevations:	.BYTE	023,017,017,017,017,017,017,032,032
+	.EVEN
+
+; Draws a robot or a bullet. R5 = struct pointer, R3 = map pointer, R2 = iso coordinates.
+Lce68_draw_robot_or_bullet:
+	MOV	R2, -(SP)
+	MOV	R3, R2
+	CALL	Lcd96_find_near_in_front
+	CMP	R2, R3
+	BEQ	Lce82_draw_continue	; nothing occludes the object: continue
+; Defer the rendering to later, after the map element in R2 has been drawn: the object's
+; pointer is moved there.
+	BISB	#MAPB_OCCUPIED, Ldd00_map(R2)
+	MOV	R2, (R5)
+	MOV	(SP)+, R2
+	RETURN
+
+Lce82_draw_continue:
+	MOV	(SP)+, R2		; iso
+	MOV	R2, -(SP)
+	MOV	R3, R1			; R1 = original map pointer (DE in the Z80 code)
+	MOV	ROBOT_STRUCT_X(R5), R3	; recompute the map pointer from the x, y of the object
+	CLR	R0
+	BISB	ROBOT_STRUCT_Y(R5), R0
+	SWAB	R0
+	ASL	R0			; y * 512
+	ADD	R0, R3
+	CMP	R1, R3
+	BNE	Lce9c_object_was_deferred
+	MOV	(SP)+, R2
+	BR	Lcec3_draw_robot_or_bullet_int
+Lce9c_object_was_deferred:
+; Reestablish the pointer of the object to its original value
+	MOV	R3, (R5)
+	MOV	R3, R0
+	MOV	R1, R3			; HL = the position where it was deferred
+	MOV	R0, R1			; BC = the real pointer
+	MOV	(SP)+, R2
+	MOV	R2, -(SP)
+	MOV	R3, -(SP)
+	BICB	#MAPB_OCCUPIED, Ldd00_map(R3)	; remove the object from its deferred position
+	DEC	R3
+	DECB	R2			; e
+; Adjust the iso coordinates to account for the fact that the object was moved
+10$:	CMPB	R1, R3
+	BEQ	20$
+	INC	R3
+	INCB	R2
+	BR	10$
+20$:	MOV	R1, R0
+	XOR	R3, R0
+	SWAB	R0
+	BEQ	30$			; high bytes are equal
+	SUB	#1000, R3
+	SUB	#400, R2		; d--
+	BR	20$
+30$:	CALL	Lcec3_draw_robot_or_bullet_int
+	MOV	(SP)+, R3
+	MOV	(SP)+, R2
+	RETURN
+
+; Draws the sprites of a bullet or robot to the buffer. R5 = struct pointer, R2 = iso.
+; Preserves R2, R3.
+Lcec3_draw_robot_or_bullet_int:
+	CMP	R5, #Lda00_player1_robots
+	BHIS	Lcee8_draw_robot_to_buffer	; bullets are located before the robots
+	MOV	R3, -(SP)
+	MOV	R2, -(SP)
+	CLR	R1
+	BISB	BULLET_STRUCT_TYPE(R5), R1
+	CLR	R0
+	BISB	BULLET_STRUCT_DIRECTION(R5), R0
+	ASL	R1
+	CMP	R0, #3
+	BLO	10$
+	INC	R1			; sprite # of the bullet: type * 2 + (direction >= 3)
+10$:	CLR	Lcf3f_sprite_elevation
+	BISB	BULLET_STRUCT_ALTITUDE(R5), Lcf3f_sprite_elevation
+	MOV	R1, R0
+	ADD	#43., R0
+	CALL	Lcf2d_draw_sprite_to_buffer
+	MOV	(SP)+, R2
+	MOV	(SP)+, R3
+	RETURN
+
+; Draws a robot: all of its selected pieces, one over the other.
+Lcee8_draw_robot_to_buffer:
+	MOV	R3, -(SP)
+	CLR	R1
+	BISB	ROBOT_STRUCT_PIECES(R5), R1	; which pieces are selected (1 bit per piece)
+	CLR	Lcf3f_sprite_elevation
+	BISB	ROBOT_STRUCT_ALTITUDE(R5), Lcf3f_sprite_elevation
+	CLR	RBPIECE
+10$:	ASR	R1
+	BCC	20$
+	MOV	R1, -(SP)
+	CALL	Lcefd_draw_robot_piece_to_buffer
+	MOV	(SP)+, R1
+20$:	INC	RBPIECE
+	CMP	RBPIECE, #8.
+	BLO	10$
+	MOV	(SP)+, R3
+	RETURN
+
+; Draws the robot piece RBPIECE (0 = bipod, 1 = tracks, ...) and raises the elevation by its height.
+Lcefd_draw_robot_piece_to_buffer:
+	MOV	R2, -(SP)
+	CLR	R1
+	BISB	ROBOT_STRUCT_DIRECTION(R5), R1	; one-hot direction
+	CLR	R4			; R4 = direction 0..3
+10$:	ASR	R1
+	BCS	20$
+	INC	R4
+	BR	10$
+20$:	MOV	RBPIECE, R0
+	ASL	R0
+	ASL	R0
+	ADD	R4, R0
+	MOVB	Ld6c8_piece_graphic_indices(R0), R0
+	ADD	#22., R0		; skip the 44 pointers of the additional graphics
+	CALL	Lcf2d_draw_sprite_to_buffer
+	MOV	(SP)+, R2
+	MOV	RBPIECE, R0
+	CLR	R1
+	BISB	Ld7b4_piece_heights(R0), R1
+	ADD	R1, Lcf3f_sprite_elevation
+	RETURN
+
+; Index of the graphic to draw for each piece in each of the 4 directions
+Ld6c8_piece_graphic_indices:
+	.BYTE	2, 2, 3, 3		; bipod
+	.BYTE	0, 0, 1, 1		; tracks
+	.BYTE	4, 4, 4, 4		; antigrav
+	.BYTE	5, 6, 7, 10		; cannon
+	.BYTE	11, 11, 12, 12		; missiles
+	.BYTE	13, 14, 15, 16		; phasers
+	.BYTE	17, 17, 17, 17		; nuclear
+	.BYTE	20, 21, 22, 23		; electronics
+Ld7b4_piece_heights:
+	.BYTE	11., 7, 8., 6, 6, 7, 7, 7
+	.EVEN
+
+;------------------------------------------------------------------------------
+
+; Draws a sprite to the frame buffer, with clipping.
+; Input: R0 = graphic (index into ISOPTR / 2), R2 = iso coordinates (d, e);
+; Lcf3f_sprite_elevation = elevation. Clobbers R0-R4. Preserves R5.
+Lcf2d_draw_sprite_to_buffer:
+	MOV	R5, -(SP)
+	MOV	R0, R1			; c = graphic
+	MOV	R2, R3
+	BIC	#177400, R3		; R3 = e
+	MOV	R3, R5			; R5 = e
+	MOV	R2, R4
+	SWAB	R4
+	BIC	#177400, R4		; R4 = d
+; screen x in nibbles = e*2 + d - 24
+	ASL	R3
+	ADD	R4, R3
+	SUB	#24., R3
+	MOVB	R3, R3			; 8 bit, signed
+; screen y in pixels (from the bottom of the sprite) = d*8 + 100 - e*4 - elevation
+	ASL	R5
+	ASL	R5
+	ASL	R4
+	ASL	R4
+	ASL	R4
+	ADD	#100., R4
+	SUB	R5, R4
+	SUB	Lcf3f_sprite_elevation, R4
+	BIC	#177400, R4		; R4 = h
+	ASR	R3			; x in bytes, C = the odd nibble
+	BIC	#177700, R1		; C is not affected
+	ROL	R1			; the odd sprites are pre-shifted by 4 pixels
+	ASL	R1
+	MOV	ISOPTR(R1), R0		; sprite address
+	CLR	R1
+	BISB	(R0)+, R1		; R1 = height in pixels
+	CLR	R2
+	BISB	(R0)+, R2		; R2 = width in bytes
+	CLR	Lcfaf_left_pixel_skip
+	CMP	R3, #VIEW_W
+	BGE	90$			; beyond the buffer right edge
+	CMP	R4, #VIEW_H
+	BLO	30$
+	CMP	R4, #<VIEW_H+66.>
+	BHIS	90$			; outside of the draw-able area from the top/bottom
+	MOV	R4, R5
+	SUB	#<VIEW_H-1>, R5
+	SUB	R1, R5
+	BPL	90$			; not tall enough to overlap with the buffer
+	NEG	R5
+	MOV	R5, R1			; visible height
+; skip the lines that would be drawn outside of the buffer
+20$:	ADD	R2, R0
+	ADD	R2, R0
+	DEC	R4
+	CMP	R4, #<VIEW_H-1>
+	BNE	20$
+; clip the sprite from the left
+30$:	TST	R3
+	BGE	40$
+	MOV	R3, R5
+	NEG	R5
+	MOV	R5, Lcfaf_left_pixel_skip
+	CLR	R3
+	CMP	R5, R2
+	BHIS	90$			; the whole sprite is skipped
+; clip the sprite from the right
+40$:	MOV	R3, R5
+	ADD	R2, R5
+	CMP	R5, #<VIEW_W+1>
+	BLO	50$
+	SUB	#VIEW_W, R5
+	MOV	R5, Lcfaf_left_pixel_skip
+45$:	SUB	#2, R0
+	DEC	R5
+	BNE	45$
+; buffer pointer = FRBUF + h * VIEW_W + x
+50$:	MOV	R4, R5
+	MUL	#VIEW_W, R5
+	ADD	R3, R5
+	ADD	#FRBUF, R5
+	MOV	R5, SPROWD
+	MOV	Lcfaf_left_pixel_skip, R5
+	ASL	R5
+	MOV	R5, SPSKIP
+	SUB	Lcfaf_left_pixel_skip, R2	; the width to draw
+; draw rows, from the bottom to the top: buffer = (buffer AND mask) OR data
+60$:	ADD	SPSKIP, R0
+	MOV	SPROWD, R3
+	MOV	R2, R4
+70$:	MOVB	(R0)+, R5
+	COM	R5
+	BICB	R5, (R3)
+	BISB	(R0)+, (R3)+
+	SOB	R4, 70$
+	SUB	#VIEW_W, SPROWD
+	CMP	SPROWD, #FRBUF
+	BLO	90$			; out of the buffer
+	DEC	R1
+	BNE	60$
+90$:	MOV	(SP)+, R5
+	RETURN
+
+; End of NERNDR.MAC

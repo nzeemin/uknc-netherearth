@@ -1,0 +1,155 @@
+; Nether Earth UKNC port: CPU side game logic.
+; Included from NEARTH.MAC. Currently a test program for the renderer (NERNDR.MAC): the game state
+; from the snapshot (NESNAP.MAC) is rendered into the frame buffer. STOP exits and prints the PPU
+; measurements.
+; With TESTREF defined (tools/run_snap_tests.py assembles with -s "TESTREF=1") the frame buffer is
+; compared with the one of the original game (NEREF.MAC) and the number of different bytes is
+; printed too; FIRE toggles the view: this port / original.
+
+GAME:
+	CALL	RUNPPU			; Start PPU procedure, clear the screen
+	MOV	#FRBUF, R0
+	ASR	R0			; word address for the PPU
+	MOV	R0, @#PPUFRB
+	MOV	#Ld800_radar_view1, R0
+	ASR	R0
+	MOV	R0, @#PPURAD		; the radar buffers for the PPU
+	CALL	DRHUD			; the right panel (status), drawn once
+	PPUFRM	FRMBLK			; the frame around the game area, drawn by the PPU
+	CALL	DRPORT			; render
+	MOVB	#1, Lfd52_update_radar_buffer_signal
+	CALL	Lb029_update_radar_view
+.IF DF TESTREF
+	CALL	CMPREF
+.ENDC
+;
+GMAIN:
+.IF DF TESTREF
+	MOV	@#PPUKEY, R0
+	MOV	R0, R1
+	BIC	KEYOLD, R1		; R1 = newly pressed keys
+	MOV	R0, KEYOLD
+	BIT	#PKEYFR, R1
+	BEQ	10$
+	COM	SHOWRF
+	BEQ	5$
+	CALL	DRORIG			; show the original buffer
+	BR	10$
+5$:	CALL	DRPORT			; show the port
+10$:
+.ENDC
+	BIT	#PKEYST, @#PPUKEY	; STOP key?
+	BEQ	GMAIN
+;
+; Exit: stop PPU, show measurements, wait for a key
+	CALL	STOPPU
+	CALL	STPALD
+	MOV	#EXITSC, R1
+	CALL	PRINT
+.IF DF TESTREF
+	MOV	#MSGDIF, R1
+	CALL	PRINT
+	MOV	DIFCNT, R0
+	CALL	PRDEC
+	MOV	#MSGFST, R1
+	CALL	PRINT
+	MOV	DIFFST, R0
+	CALL	PRDEC
+	MOV	#MSGRAD, R1
+	CALL	PRINT
+	MOV	DIFRAD, R0
+	CALL	PRDEC
+	MOV	#MSGFST, R1
+	CALL	PRINT
+	MOV	DIFRDF, R0
+	CALL	PRDEC
+.ENDC
+	MOV	#MSGPAS, R1
+	CALL	PRINT
+	MOV	@#PPUPAS, R0
+	CALL	PRDEC
+	MOV	#MSGTCK, R1
+	CALL	PRINT
+	MOV	@#PPUTCK, R0
+	CALL	PRDEC
+	MOV	#MSGEND, R1
+	CALL	PRINT
+	TSTB	@#177560
+	BPL	.-4
+	MOV	OSTACK, SP
+	EMT	350			; .EXIT
+
+; Parameter blocks for the PPU print command: screen address, ink, paper index, string
+FRMBLK:	.WORD	SCREEN+<<VIEW_ROW-1>*TILEH*LINEW>+<VIEW_COL-1>, VIEW_W+2, <VIEW_H/TILEH>+2, 0, 7
+
+.IF DF TESTREF
+MSGDIF:	.ASCIZ	/Different bytes: /
+MSGFST:	.ASCIZ	/  first at: /
+MSGRAD:	.BYTE	15, 12
+	.ASCIZ	/Radar different bytes: /
+.ENDC
+MSGPAS:	.BYTE	15, 12
+	.ASCIZ	/PPU passes: /
+MSGTCK:	.ASCIZ	/  ticks (50Hz): /
+MSGEND:	.BYTE	15, 12
+	.ASCIZ	/Press any key/
+	.EVEN
+
+;------------------------------------------------------------------------------
+
+; Render the game area with the port code into the frame buffer
+DRPORT:	CALL	Lcfd7_draw_blank_map_in_buffer
+	CALL	Lccc6_draw_map_to_buffer
+	RETURN
+
+.IF DF TESTREF
+KEYOLD:	.WORD	0			; Previous PPUKEY value
+SHOWRF:	.WORD	0			; 0 = port is shown, -1 = original
+DIFCNT:	.WORD	0			; Number of different bytes
+DIFFST:	.WORD	0			; Index of the first different byte
+DIFRAD:	.WORD	0			; Number of different bytes in the radar buffers
+DIFRDF:	.WORD	0			; Index of the first different byte
+
+; Copy the original frame buffer into the frame buffer
+DRORIG:	MOV	#REFBUF, R0
+	MOV	#FRBUF, R1
+	MOV	#<VIEW_BYTES/2>, R2
+10$:	MOV	(R0)+, (R1)+
+	SOB	R2, 10$
+	RETURN
+
+; Compare the frame buffer with the original: DIFCNT = number of different bytes, DIFFST = first
+CMPREF:	CLR	DIFRAD
+	MOV	#-1, DIFRDF
+	MOV	#Ld800_radar_view1, R0
+	MOV	#REFRAD, R1
+	MOV	#512., R2
+5$:	CMPB	(R0)+, (R1)+
+	BEQ	6$
+	INC	DIFRAD
+	TST	DIFRDF
+	BPL	6$
+	MOV	R0, DIFRDF
+	SUB	#Ld800_radar_view1+1, DIFRDF
+6$:	SOB	R2, 5$
+	CLR	DIFCNT
+	MOV	#-1, DIFFST
+	MOV	#FRBUF, R0
+	MOV	#REFBUF, R1
+	MOV	#VIEW_BYTES, R2
+10$:	CMPB	(R0)+, (R1)+
+	BEQ	20$
+	INC	DIFCNT
+	TST	DIFFST
+	BPL	20$
+	MOV	R0, DIFFST
+	SUB	#FRBUF+1, DIFFST
+20$:	SOB	R2, 10$
+	RETURN
+.ENDC
+
+;------------------------------------------------------------------------------
+
+; Frame buffer: VIEW_W x VIEW_H, 1bpp, VIEW_W bytes per line. The PPU reads it from here.
+	.EVEN
+FRBUF:	.BLKB	VIEW_BYTES
