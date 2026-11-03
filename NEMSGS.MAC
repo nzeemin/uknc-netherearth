@@ -213,4 +213,193 @@ CSOPT2:
 	MSTR	28., 22., 7, 0, < EXIT MENU>
 	.WORD	0
 
+;@ ROBOT MENU
+; The menu of the robot the player has landed on, in the right panel (row = row of the ZX screen). RMLIST is
+; drawn at once (CMDSTS): the items of two lines (the first block of an item has the mark ">" or " " before the text,
+; in the first column of the panel and the text from the second, the continuation of an item is indented by 2 spaces; the ink and the mark are changed by the CPU), and -ORDERS-.
+RMLIST:
+RMI0A:
+	HSTR	4., 0., 5, 0, < DIRECT>
+RMI0B:
+	HSTR	5., 0., 5, 0, <  CONTROL>
+RMI1A:
+	HSTR	7., 0., 5, 0, < GIVE>
+RMI1B:
+	HSTR	8., 0., 5, 0, <  ORDERS>
+RMI2A:
+	HSTR	10., 0., 5, 0, < COMBAT>
+RMI2B:
+	HSTR	11., 0., 5, 0, <  MODE>
+RMI3A:
+	HSTR	13., 0., 5, 0, < LEAVE>
+RMI3B:
+	HSTR	14., 0., 5, 0, <  ROBOT>
+	HSTR	17., 1., 6, 0, <-ORDERS->
+	.WORD	0
+; The name of the orders of the robot (3 lines), drawn by CMDSTS, one list for each of the orders
+RMO0:
+	HSTR	18., 1., 5, 0, < STOP   >
+	HSTR	19., 1., 5, 0, <  AND   >
+	HSTR	20., 1., 5, 0, < DEFEND >
+	.WORD	0
+RMO1:
+	HSTR	18., 1., 5, 0, <ADVANCE >
+	HSTR	19., 1., 5, 0, <        >
+	HSTR	20., 1., 5, 0, < MILES  >
+	.WORD	0
+RMO2:
+	HSTR	18., 1., 5, 0, <RETREAT >
+	HSTR	19., 1., 5, 0, <        >
+	HSTR	20., 1., 5, 0, < MILES  >
+	.WORD	0
+RMO3:
+	HSTR	18., 1., 5, 0, <DESTROY >
+	HSTR	19., 1., 5, 0, < ENEMY  >
+	HSTR	20., 1., 5, 0, < ROBOTS >
+	.WORD	0
+RMO4:
+	HSTR	18., 1., 5, 0, <DESTROY >
+	HSTR	19., 1., 5, 0, < ENEMY  >
+	HSTR	20., 1., 5, 0, <FACTORYS>
+	.WORD	0
+RMO5:
+	HSTR	18., 1., 5, 0, <DESTROY >
+	HSTR	19., 1., 5, 0, < ENEMY  >
+	HSTR	20., 1., 5, 0, <WARBASES>
+	.WORD	0
+RMO6:
+	HSTR	18., 1., 5, 0, <CAPTURE >
+	HSTR	19., 1., 5, 0, <NEUTRAL >
+	HSTR	20., 1., 5, 0, <FACTORYS>
+	.WORD	0
+RMO7:
+	HSTR	18., 1., 5, 0, <CAPTURE >
+	HSTR	19., 1., 5, 0, < ENEMY  >
+	HSTR	20., 1., 5, 0, <FACTORYS>
+	.WORD	0
+RMO8:
+	HSTR	18., 1., 5, 0, <CAPTURE >
+	HSTR	19., 1., 5, 0, < ENEMY  >
+	HSTR	20., 1., 5, 0, <WARBASES>
+	.WORD	0
+; The strength of the robot, for both menus: the label STRENGTH and the number with "%" (the block RMSTRB is
+; written by the CPU: 3 characters and "%"), one list
+RMSTL:
+	HSTR	23., 1., 6, 0, <STRENGTH>
+RMSTRB:	.WORD	SCREEN+<24.*TILEH*LINEW>+HUD_COL+3, 7, 0
+	.BLKB	6
+	.WORD	0
+
+;@ COMBAT MODE
+; The menu of the combat mode of the robot (the right panel, as [ROBOT MENU]): 6 items of two lines.
+CMLIST:
+CMI0A:
+	HSTR	4., 0., 5, 0, < NUCLEAR>
+CMI0B:
+	HSTR	5., 0., 5, 0, <  BOMB>
+CMI1A:
+	HSTR	7., 0., 5, 0, < FIRE>
+CMI1B:
+	HSTR	8., 0., 5, 0, <  PHASERS>
+CMI2A:
+	HSTR	10., 0., 5, 0, < FIRE>
+CMI2B:
+	HSTR	11., 0., 5, 0, <  MISSILES>
+CMI3A:
+	HSTR	13., 0., 5, 0, < FIRE>
+CMI3B:
+	HSTR	14., 0., 5, 0, <  CANNON>
+CMI4A:
+	HSTR	16., 0., 5, 0, < MOVE>
+CMI4B:
+	HSTR	17., 0., 5, 0, <  ROBOT>
+CMI5A:
+	HSTR	19., 0., 5, 0, < STOP>
+CMI5B:
+	HSTR	20., 0., 5, 0, <  COMBAT>
+	.WORD	0
+
+;@ ROBOT ORDERS
+; The menus of GIVE ORDERS (the right panel, as [ROBOT MENU]): the orders, the target of SEARCH & DESTROY and of
+; SEARCH & CAPTURE, the distance of ADVANCE and RETREAT.
+OMLIST:
+	HSTR	4., 2., 7, 0, <SELECT>
+	HSTR	5., 2., 7, 0, <ORDERS>
+OMI0A:
+	HSTR	7., 0., 5, 0, < STOP AND>
+OMI0B:
+	HSTR	8., 0., 5, 0, <  DEFEND>
+OMI1A:
+	HSTR	10., 0., 5, 0, < ADVANCE>
+OMI1B:
+	HSTR	11., 0., 5, 0, <  ?? MILES>
+OMI2A:
+	HSTR	13., 0., 5, 0, < RETREAT>
+OMI2B:
+	HSTR	14., 0., 5, 0, <  ?? MILES>
+OMI3A:
+	HSTR	16., 0., 5, 0, < SEARCH &>
+OMI3B:
+	HSTR	17., 0., 5, 0, <  DESTROY>
+OMI4A:
+	HSTR	19., 0., 5, 0, < SEARCH &>
+OMI4B:
+	HSTR	20., 0., 5, 0, <  CAPTURE>
+	.WORD	0
+ODLIST:
+	HSTR	4., 1., 7, 0, <SEARCH &>
+	HSTR	5., 1., 7, 0, < DESTROY>
+	HSTR	8., 2., 5, 0, <SELECT>
+	HSTR	9., 2., 5, 0, <TARGET>
+ODI0A:
+	HSTR	12., 0., 5, 0, < ENEMY>
+ODI0B:
+	HSTR	13., 0., 5, 0, <  ROBOTS>
+ODI1A:
+	HSTR	15., 0., 5, 0, < ENEMY>
+ODI1B:
+	HSTR	16., 0., 5, 0, <  FACTORYS>
+ODI2A:
+	HSTR	18., 0., 5, 0, < ENEMY>
+ODI2B:
+	HSTR	19., 0., 5, 0, <  WARBASES>
+	.WORD	0
+OCLIST:
+	HSTR	4., 1., 7, 0, <SEARCH &>
+	HSTR	5., 1., 7, 0, < CAPTURE>
+	HSTR	8., 2., 5, 0, <SELECT>
+	HSTR	9., 2., 5, 0, <TARGET>
+OCI0A:
+	HSTR	12., 0., 5, 0, < NEUTRAL>
+OCI0B:
+	HSTR	13., 0., 5, 0, <  FACTORYS>
+OCI1A:
+	HSTR	15., 0., 5, 0, < ENEMY>
+OCI1B:
+	HSTR	16., 0., 5, 0, <  FACTORYS>
+OCI2A:
+	HSTR	18., 0., 5, 0, < ENEMY>
+OCI2B:
+	HSTR	19., 0., 5, 0, <  WARBASES>
+	.WORD	0
+ADLIST:
+	HSTR	5., 1., 7, 0, <ADVANCE >
+	HSTR	6., 1., 7, 0, <?? MILES>
+	HSTR	9., 2., 5, 0, < SELECT>
+	HSTR	10., 2., 5, 0, <DISTANCE>
+	HSTR	13., 4., 6, 0, <MILES>
+	.WORD	0
+RELIST:
+	HSTR	5., 1., 7, 0, <RETREAT >
+	HSTR	6., 1., 7, 0, <?? MILES>
+	HSTR	9., 2., 5, 0, < SELECT>
+	HSTR	10., 2., 5, 0, <DISTANCE>
+	HSTR	13., 4., 6, 0, <MILES>
+	.WORD	0
+; The distance chosen (the number is written by the CPU: 2 characters), and the distance in the orders of the robot
+RMMB:	.WORD	SCREEN+<13.*TILEH*LINEW>+HUD_COL+1, 6, 0
+	.BLKB	4
+RMOMB:	.WORD	SCREEN+<19.*TILEH*LINEW>+HUD_COL+3, 5, 0
+	.BLKB	4
+
 ; End of NEMSGS.MAC

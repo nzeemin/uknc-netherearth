@@ -8,6 +8,9 @@ The table (UTF-8) has one pair per line, the text to find and its replacement in
 Spaces and tabs around "=" do not matter, the spaces inside the quotes do (they count). Lines that are
 empty or start with ';' are comments.
 
+A line `"text" /` (a slash instead of "=") says that the text stays as it is: no warning
+about a missing translation.
+
 The texts of the different screens can have different translations of the same English text: the source
 is divided into sections by the lines `;@ NAME` (the name in capitals), the table has the headers `[NAME]`.
 A text of a section is searched in the table section with the same name first, then among the lines
@@ -27,6 +30,7 @@ import sys
 SECTION = re.compile(r'^\s*\[([^\]]+)\]\s*$')
 MARK = re.compile(r'^;@\s*(.*?)\s*$')
 ROW = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*$')
+SAME = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*/\s*$')	# "text" /  = the translation is the same as the text
 ASCII_DIR = re.compile(r'^(\s*)(\.ASCIZ|\.ASCII)(\s+)(\S)(.*)$', re.I)
 MACRO = re.compile(r'^(\s*)(MSTR|HSTR)(\s+)(.*?)<(.*)>(\s*)(;.*)?$')
 
@@ -51,9 +55,13 @@ def read_table(path):
                 table.setdefault(section, {})
                 continue
             m = ROW.match(line)
-            if not m:
-                raise SystemExit('%s:%d: expected "text" = "text" or [SECTION]' % (path, n))
-            key, val = unescape(m.group(1)), unescape(m.group(2))
+            if m:
+                key, val = unescape(m.group(1)), unescape(m.group(2))
+            else:
+                m = SAME.match(line)
+                if not m:
+                    raise SystemExit('%s:%d: expected "text" = "text", "text" / or [SECTION]' % (path, n))
+                key = val = unescape(m.group(1))
             rows = table[section]
             if key in rows and rows[key][0] != val:
                 raise SystemExit('%s:%d: "%s" has two different translations in [%s]' % (path, n, key, section))

@@ -25,6 +25,28 @@ La600_start:
 	CALL	Lnew_game
 	CALL	TESTNW
 .ENDC
+.IF DF TESTLAND
+	CALL	Lnew_game		; the player on a robot of his: the robot menu opens at once
+	MOV	#Lda00_player1_robots, R5
+	MOVB	#11, ROBOT_STRUCT_PIECES(R5)	; bipod and cannon (the bits of the pieces)
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
+	MOVB	#18., ROBOT_STRUCT_HEIGHT(R5)
+	MOVB	#ROBOT_CONTROL_AUTO, ROBOT_STRUCT_CONTROL(R5)
+	MOVB	#4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOVB	#5, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	MOVB	#ORDERS_STOP_AND_DEFEND, ROBOT_STRUCT_ORDERS(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOV	#22., R3
+	MOV	#5, R4
+	MOV	#22., Lfd0e_player_x
+	MOVB	#5, Lfd0d_player_y
+	MOVB	#18., Lfd10_player_altitude
+	CLRB	Lfd30_player_elevate_timer
+	CALL	Lcc7c_set_robot_position
+	CALL	Lbb40_count_robots
+.ENDC
 .IF DF TESTCONS
 	CALL	Lnew_game		; the player above the "H" of his warbase: the construction screen opens at once
 	MOV	#22., Lfd0e_player_x
@@ -50,11 +72,14 @@ La69a_game_loop:
 	; TODO: CALL Lb0ca_update_robots_bullets_and_ai
 	CALL	DRPORT			; Lccbd_redraw_game_area
 	CALL	Lad62_increase_time
-; The player lands on something (the tests with NOMENU have no landing, except TESTCONS)
+; The player lands on something (the tests with NOMENU have no landing, except TESTCONS and TESTLAND)
 .IF NDF NOMENU
 LANDING = 1
 .IFF
 .IF DF TESTCONS
+LANDING = 1
+.ENDC
+.IF DF TESTLAND
 LANDING = 1
 .ENDC
 .ENDC
@@ -63,7 +88,21 @@ LANDING = 1
 	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
 	BEQ	La70d_game_loop_continue
 	CALL	Lcdd8_get_robot_at_ptr
-	BEQ	La70d_game_loop_continue		; a robot: TODO landing on the robot (La720)
+	BNE	La6c8_not_landed_on_a_robot
+	CMP	R5, #<Lda00_player1_robots+<MAX_ROBOTS_PER_PLAYER*ROBOT_STRUCT_SIZE>>
+	BHIS	La70d_game_loop_continue		; a robot of the enemy: ignore
+	CLR	R0
+	BISB	Lfd10_player_altitude, R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_HEIGHT(R5), R1
+	SUB	R1, R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_ALTITUDE(R5), R1
+	SUB	R1, R0
+	BNE	La70d_game_loop_continue		; not right on top of the robot
+	CALL	La720_land_on_robot
+	BR	La70d_game_loop_continue
+La6c8_not_landed_on_a_robot:
 	CALL	Lcdf5_find_decoration_with_ptr
 	BNE	La70d_game_loop_continue		; not on top of any ownable building
 	TSTB	DECOR_STRUCT_TYPE(R5)
@@ -669,6 +708,384 @@ Ld0ca_draw_in_game_screen:
 	RETURN
 
 ;------------------------------------------------------------------------------
+; The tick of the game inside the menus (the game goes on while the menu of a robot is open): the frame, the radar,
+; the time, the pause up to the end of the cycle
+Lgame_tick:
+	CALL	DRPORT
+	CALL	Lb048_update_radar
+	JMP	Lad62_increase_time
+
+;------------------------------------------------------------------------------
+; The player has landed on a robot of his (La720): the menu in the right panel of the HUD (the texts are in
+; NEMSGS.MAC, [ROBOT MENU]). The items: DIRECT CONTROL, GIVE ORDERS, COMBAT MODE, LEAVE ROBOT. COMBAT MODE opens
+; its menu ([COMBAT MODE]); so far every other action leaves the robot, and every item of the combat menu goes
+; back to the menu of the robot (stubs). The cursor starts on LEAVE ROBOT as in the original.
+; The menu on the screen is described by RMTAB (the pairs of blocks of the items: the ink and the mark ">" are
+; changed in them), RMLST (the list of the items, CMDSTS), RMCNT (the number of the items), RMCUR (the current one).
+RMROB:	.WORD	0			; the robot
+RMCUR:	.WORD	0			; the current item
+RMCNT:	.WORD	0			; the number of the items
+RMTAB:	.WORD	0			; the table of the blocks of the items
+RMLST:	.WORD	0			; the list of the strings of the items
+RMLAST:	.WORD	0			; the current item of the menu of the robot (kept while the combat menu is open)
+RMITAB:	.WORD	RMI0A, RMI0B, RMI1A, RMI1B, RMI2A, RMI2B, RMI3A, RMI3B
+RMNIT = 4.
+CMITAB:	.WORD	CMI0A, CMI0B, CMI1A, CMI1B, CMI2A, CMI2B, CMI3A, CMI3B, CMI4A, CMI4B, CMI5A, CMI5B
+CMNIT = 6.
+RMOTAB:	.WORD	RMO0, RMO1, RMO2, RMO3, RMO4, RMO5, RMO6, RMO7, RMO8
+; The panel without the day and the time, with the column of the marks on the left of it (CMDBOX)
+RMBOX:	.WORD	SCREEN+<2.*TILEH*LINEW>+HUD_COL-1, 13., 23., 0
+
+; R0 = the item, R1 = the ink, R3 = the character before the text: set in the blocks of the item
+Lrm_mark:
+	MOV	R0, R2
+	ASL	R2
+	ASL	R2
+	ADD	RMTAB, R2
+	MOV	(R2), R4
+	MOV	R1, MNB_INK(R4)
+	MOVB	R3, 6(R4)
+	MOV	2(R2), R4
+	MOV	R1, MNB_INK(R4)
+	RETURN
+
+; The ink and the mark of all the items, the current one is yellow with ">"
+Lrm_set_items:
+	CLR	R0
+10$:	MOV	#5, R1
+	MOV	#' , R3
+	CMP	R0, RMCUR
+	BNE	20$
+	MOV	#6, R1
+	MOV	#'>, R3
+20$:	CALL	Lrm_mark
+	INC	R0
+	CMP	R0, RMCNT
+	BLO	10$
+	RETURN
+
+; Draws the menu: the items and what else is in the list
+Lrm_draw_menu:
+	CALL	Lrm_set_items
+	MOV	RMLST, R2
+	CLC
+	ROR	R2			; the word address for the PPU
+10$:	TST	@#PPUCOM
+	BNE	10$
+	MOV	R2, @#PPUDAT
+	PPUCMW	#CMDSTS
+	RETURN
+
+; Draws the name of the orders of the robot
+Lrm_draw_orders:
+	MOV	RMROB, R5
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	ASL	R0
+	MOV	RMOTAB(R0), R2
+	CLC
+	ROR	R2			; the word address for the PPU
+10$:	TST	@#PPUCOM
+	BNE	10$
+	MOV	R2, @#PPUDAT
+	PPUCMW	#CMDSTS
+	MOV	RMROB, R5		; ADVANCE and RETREAT: the distance in miles
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	DEC	R0
+	CMP	R0, #2
+	BHIS	20$
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5), R0
+	ASR	R0
+	MOV	#<RMOMB+6>, R4
+	CALL	Lrm_fmt2
+	CLRB	(R4)
+	PPUSTR	RMOMB
+20$:	RETURN
+
+; Draws the strength of the robot (0..100 and more) and "%"
+Lrm_draw_strength:
+	MOV	RMROB, R5
+	CLR	R0
+	BISB	ROBOT_STRUCT_STRENGTH(R5), R0
+	TSTB	ROBOT_STRUCT_STRENGTH(R5)
+	BPL	5$
+	CLR	R0			; negative: 0
+5$:	MOV	#<RMSTRB+6>, R4
+	MOV	#CSDTAB, R2
+	CLR	R5			; no digits yet
+10$:	CLR	R1
+20$:	CMP	R0, (R2)
+	BLO	30$
+	SUB	(R2), R0
+	INC	R1
+	BR	20$
+30$:	TST	R1
+	BNE	40$
+	TST	R5
+	BNE	40$
+	MOVB	#' , (R4)+
+	BR	50$
+40$:	MOV	#1, R5
+	ADD	#'0, R1
+	MOVB	R1, (R4)+
+50$:	TST	(R2)+
+	CMP	R2, #CSDTBE
+	BNE	10$
+	ADD	#'0, R0
+	MOVB	R0, (R4)+
+	MOVB	#'%, (R4)+
+	CLRB	(R4)
+	PPUSTS	RMSTL			; the label and the number
+	RETURN
+
+; Clears the panel (the HUD without the day and the time)
+Lrm_box:
+	TST	@#PPUCOM
+	BNE	Lrm_box
+	MOVHW	RMBOX, @#PPUDAT
+	PPUCMW	#CMDBOX
+	RETURN
+
+; The panel is cleared, the HUD is drawn again
+Lrm_close:
+	CALL	Lrm_box
+	JMP	DRHUD
+
+; The menu loop (Lacd7): up/down move the current item, FIRE chooses it, the game goes on. Returns R0 = the item,
+; or -1 if the robot is destroyed
+Lrm_menu:
+	CALL	Lrm_draw_menu
+	CLR	@#PPUKEL		; the presses before the entry do not count
+10$:	MOV	RMROB, R5
+	CMP	ROBOT_STRUCT_MAP_PTR(R5), #NOSLOT
+	BEQ	90$			; the robot is destroyed
+	MOV	@#PPUKEL, R1		; the keys pressed since the last poll
+	BIC	R1, @#PPUKEL
+	BIT	#PKEYFR, R1
+	BNE	80$
+	BIT	#PKEYUP, R1
+	BEQ	20$
+	TST	RMCUR
+	BEQ	50$
+	DEC	RMCUR
+	BR	40$
+20$:	BIT	#PKEYDN, R1
+	BEQ	50$
+	MOV	RMCNT, R0
+	DEC	R0
+	CMP	RMCUR, R0
+	BHIS	50$
+	INC	RMCUR
+40$:	CALL	Lrm_draw_menu
+50$:	CALL	Lgame_tick
+	BR	10$
+80$:	MOV	RMCUR, R0
+	RETURN
+90$:	MOV	#-1, R0
+	RETURN
+
+; The combat mode: the menu of the combat (so far every item goes back to the menu of the robot).
+; Returns R0 = -1 if the robot is destroyed
+Lcombat_mode:
+	CALL	Lrm_box
+	CALL	Lrm_draw_strength
+	MOV	#CMITAB, RMTAB
+	MOV	#CMLIST, RMLST
+	MOV	#CMNIT, RMCNT
+	MOV	#<CMNIT-1>, RMCUR	; STOP COMBAT
+	JMP	Lrm_menu
+
+; ----- GIVE ORDERS (La971): the menus of the orders; the texts are in NEMSGS.MAC, [ROBOT ORDERS]
+RMMIL:	.WORD	0			; the distance in miles
+OMITAB:	.WORD	OMI0A, OMI0B, OMI1A, OMI1B, OMI2A, OMI2B, OMI3A, OMI3B, OMI4A, OMI4B
+ODITAB:	.WORD	ODI0A, ODI0B, ODI1A, ODI1B, ODI2A, ODI2B
+OCITAB:	.WORD	OCI0A, OCI0B, OCI1A, OCI1B, OCI2A, OCI2B
+
+; R2 = a list of strings (the address in the CPU memory): draws it
+Lrm_send:
+	CLC
+	ROR	R2			; the word address for the PPU
+10$:	TST	@#PPUCOM
+	BNE	10$
+	MOV	R2, @#PPUDAT
+	PPUCMW	#CMDSTS
+	RETURN
+
+; R0 = a number 0..99, R4 = the buffer: 2 characters (a space instead of the leading zero)
+Lrm_fmt2:
+	CLR	R1
+10$:	CMP	R0, #10.
+	BLO	20$
+	SUB	#10., R0
+	INC	R1
+	BR	10$
+20$:	TST	R1
+	BNE	30$
+	MOVB	#' , (R4)+
+	BR	40$
+30$:	ADD	#'0, R1
+	MOVB	R1, (R4)+
+40$:	ADD	#'0, R0
+	MOVB	R0, (R4)+
+	RETURN
+
+; Draws the chosen distance
+Lrm_draw_miles:
+	MOV	RMMIL, R0
+	MOV	#<RMMB+6>, R4
+	CALL	Lrm_fmt2
+	CLRB	(R4)
+	PPUSTR	RMMB
+	RETURN
+
+; GIVE ORDERS: returns R0 = -1 if the robot is destroyed
+Lgive_orders:
+	CALL	Lrm_box
+	CALL	Lrm_draw_strength
+	MOV	#OMITAB, RMTAB
+	MOV	#OMLIST, RMLST
+	MOV	#5, RMCNT
+	CLR	RMCUR			; STOP AND DEFEND
+	CALL	Lrm_menu
+	TST	R0
+	BMI	90$
+	BNE	10$
+	MOV	RMROB, R5
+	CLRB	ROBOT_STRUCT_ORDERS(R5)	; STOP AND DEFEND
+	RETURN
+10$:	CMP	R0, #3
+	BHIS	20$
+	JMP	Lorders_miles		; ADVANCE (1), RETREAT (2)
+20$:	SUB	#3, R0			; 0 = DESTROY, 1 = CAPTURE
+	JMP	Lorders_target
+90$:	RETURN
+
+; ADVANCE / RETREAT (R0 = 1 / 2): the distance in miles, up/down by 5 miles, 0..50, FIRE: done (1 mile = 2 units;
+; 0 miles = STOP AND DEFEND). Returns R0 = -1 if the robot is destroyed
+Lorders_miles:
+	MOV	R0, -(SP)
+	MOV	RMROB, R5
+	MOVB	R0, ROBOT_STRUCT_ORDERS(R5)
+	CALL	Lrm_box
+	CALL	Lrm_draw_strength
+	MOV	#ADLIST, R2
+	CMP	(SP), #1
+	BEQ	10$
+	MOV	#RELIST, R2
+10$:	CALL	Lrm_send
+	CLR	RMMIL
+	CALL	Lrm_draw_miles
+	CLR	@#PPUKEL		; the presses before the entry do not count
+20$:	MOV	RMROB, R5
+	CMP	ROBOT_STRUCT_MAP_PTR(R5), #NOSLOT
+	BEQ	95$			; the robot is destroyed
+	MOV	@#PPUKEL, R1		; the keys pressed since the last poll
+	BIC	R1, @#PPUKEL
+	BIT	#PKEYFR, R1
+	BNE	80$
+	BIT	#PKEYUP, R1
+	BEQ	30$
+	CMP	RMMIL, #45.
+	BHI	50$
+	ADD	#5, RMMIL
+	BR	40$
+30$:	BIT	#PKEYDN, R1
+	BEQ	50$
+	CMP	RMMIL, #5
+	BLO	50$
+	SUB	#5, RMMIL
+40$:	CALL	Lrm_draw_miles
+50$:	CALL	Lgame_tick
+	BR	20$
+80$:	MOV	RMMIL, R0
+	ASL	R0
+	MOVB	R0, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	BNE	90$
+	CLRB	ROBOT_STRUCT_ORDERS(R5)
+90$:	TST	(SP)+
+	CLR	R0
+	RETURN
+95$:	TST	(SP)+
+	MOV	#-1, R0
+	RETURN
+
+; SEARCH & DESTROY (R0 = 0) / SEARCH & CAPTURE (R0 = 1): the target. Destroying the factories and the warbases needs
+; the nuclear weapon, else the order is cancelled. TODO: Lb34d_find_capture_or_destroy_target: the argument of the
+; orders, the target found (now no target: 377). Returns R0 = -1 if the robot is destroyed
+Lorders_target:
+	MOV	R0, -(SP)
+	CALL	Lrm_box
+	CALL	Lrm_draw_strength
+	MOV	#ODITAB, RMTAB
+	MOV	#ODLIST, RMLST
+	TST	(SP)
+	BEQ	10$
+	MOV	#OCITAB, RMTAB
+	MOV	#OCLIST, RMLST
+10$:	MOV	#3, RMCNT
+	CLR	RMCUR
+	CALL	Lrm_menu
+	TST	R0
+	BMI	95$
+	MOV	RMROB, R5
+	ADD	#3, R0			; DESTROY ROBOTS = 3, FACTORIES = 4, WARBASES = 5
+	TST	(SP)
+	BEQ	20$
+	ADD	#3, R0			; CAPTURE: 6, 7, 8
+20$:	MOVB	R0, ROBOT_STRUCT_ORDERS(R5)
+	CMP	R0, #ORDERS_DESTROY_ENEMY_FACTORIES
+	BLO	30$
+	CMP	R0, #ORDERS_CAPTURE_NEUTRAL_FACTORIES
+	BHIS	30$
+	BITB	#100, ROBOT_STRUCT_PIECES(R5)	; the nuclear weapon
+	BNE	30$
+	CLRB	ROBOT_STRUCT_ORDERS(R5)	; cancelled: STOP AND DEFEND
+	BR	40$
+30$:	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+40$:	TST	(SP)+
+	CLR	R0
+	RETURN
+95$:	TST	(SP)+
+	MOV	#-1, R0
+	RETURN
+
+La720_land_on_robot:
+	MOV	R5, RMROB
+	MOVB	#ROBOT_CONTROL_PLAYER_LANDED, ROBOT_STRUCT_CONTROL(R5)
+	MOV	#3, RMLAST		; LEAVE ROBOT
+La732_land_on_robot_internal:
+	CALL	Lrm_box
+	CALL	Lrm_draw_orders
+	CALL	Lrm_draw_strength
+	MOV	#RMITAB, RMTAB
+	MOV	#RMLIST, RMLST
+	MOV	#RMNIT, RMCNT
+	MOV	RMLAST, RMCUR
+	CALL	Lrm_menu
+	TST	R0
+	BMI	90$			; the robot is destroyed
+	MOV	R0, RMLAST
+	CMP	R0, #1
+	BNE	60$
+	CALL	Lgive_orders		; GIVE ORDERS
+	TST	R0
+	BPL	La732_land_on_robot_internal
+	BR	90$
+60$:	CMP	R0, #2
+	BNE	80$
+	CALL	Lcombat_mode		; COMBAT MODE
+	TST	R0
+	BPL	La732_land_on_robot_internal
+	BR	90$
+80$:	MOV	RMROB, R5		; the other items: LEAVE ROBOT (the stubs)
+	CLRB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)	; the robot controls itself again
+	CLRB	ROBOT_STRUCT_CONTROL(R5)
+	MOVB	#5, Lfd30_player_elevate_timer	; the player floats a bit after leaving the robot
+90$:	JMP	Lrm_close
+
+;------------------------------------------------------------------------------
 ; The robot construction screen (the player is on top of the "H" of his warbase)
 
 
@@ -924,6 +1341,12 @@ Lc85d_start_robot:
 	MOVB	#ROBOT_CONTROL_AUTO, ROBOT_STRUCT_CONTROL(R5)
 	MOVB	Lfd21_constr_selected_pieces, ROBOT_STRUCT_PIECES(R5)
 	CALL	Lcc7c_set_robot_position
+	MOV	CSROB, R5		; the initial state of the new robot
+	MOVB	#4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)	; moves down by default
+	MOVB	#5, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)	; walks 5 steps after leaving the base, and stops
+	MOVB	#ORDERS_STOP_AND_DEFEND, ROBOT_STRUCT_ORDERS(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
 	CALL	Lbb40_count_robots	; the HUD shows the number of robots
 	SEC
 	RETURN
@@ -1039,11 +1462,9 @@ Lc85d_redraw_item:
 ; The cursor loop: up/down move the current item, STOP leaves. Returns R0 = the item where FIRE was pressed
 ; (0..7 pieces by the screen order, 8 = START ROBOT, 9 = EXIT MENU), or -1 for STOP.
 Lc85d_cursor_loop:
-	MOV	@#PPUKEY, MNKEYO	; the keys held at the entry do not count
-10$:	MOV	@#PPUKEY, R0
-	MOV	R0, R1
-	BIC	MNKEYO, R1		; the keys pressed now
-	MOV	R0, MNKEYO
+	CLR	@#PPUKEL		; the presses before the entry do not count
+10$:	MOV	@#PPUKEL, R1		; the keys pressed since the last poll
+	BIC	R1, @#PPUKEL
 	BIT	#PKEYST, R1
 	BNE	90$
 	BIT	#PKEYFR, R1
@@ -1129,7 +1550,6 @@ Lc85d_robot_construction:
 
 
 MNSEL:	.WORD	0			; the selected item: 0 = START GAME, 1 = LOAD SAVED GAME
-MNKEYO:	.WORD	0			; the previous state of the keys
 MNSCL:	.BYTE	'2			; the height scale character of the selected item
 	.EVEN
 
@@ -1162,7 +1582,7 @@ Lmenu_select:
 	MOV	R0, MNLST
 	MOV	R1, MNTAB1
 	MOV	R2, MNCNT
-	MOV	@#PPUKEY, MNKEYO	; the keys held at the entry do not count
+	CLR	@#PPUKEL		; the presses before the entry do not count
 Lc106_menu_redraw_options:
 	MOV	MNTAB1, R3
 	CLR	R4
@@ -1184,10 +1604,8 @@ Lc106_menu_redraw_options:
 	MOV	MNLST, @#PPUDAT
 	PPUCMW	#CMDSTS
 Lc1a1_wait_for_key_press_loop:
-	MOV	@#PPUKEY, R0
-	MOV	R0, R1
-	BIC	MNKEYO, R1		; the keys pressed now
-	MOV	R0, MNKEYO
+	MOV	@#PPUKEL, R1		; the keys pressed since the last poll
+	BIC	R1, @#PPUKEL
 	BIT	#PKEYST, R1
 	BNE	Lc100_exit
 	BIT	#PKEYUP, R1
@@ -1592,6 +2010,6 @@ Ld7bc_map_piece_heights:
 
 ; Frame buffer: VIEW_W x VIEW_H, 1bpp, VIEW_W bytes per line. The PPU reads it from here.
 	.EVEN
-FRBUF:	.BLKB	VIEW_BYTES
+; FRBUF (what the PPU shows) is in the memory of the PPU block, see NEPPU.MAC
 ; The frame is rendered here (NERNDR.MAC) and copied to FRBUF when it is ready
 RNDBUF:	.BLKB	VIEW_BYTES

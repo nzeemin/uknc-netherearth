@@ -28,6 +28,12 @@ Lb036_flicker_player_in_radar:
 	CALL	Ld65a_flip_2x2_radar_area
 10$:	RETURN
 
+; Lb048: makes the player blink in the radar (visible / not visible) and updates the radar
+Lb048_update_radar:
+	CALL	Lb036_flicker_player_in_radar
+	INCB	Lfd1e_player_visible_in_radar
+	BR	Lb029_update_radar_view
+
 ; Updates the two radar buffers with all the buildings and robots in the map.
 Ld5f8_update_radar_buffers:
 	MOV	#Ld800_radar_view1, R4	; buffer pointer
