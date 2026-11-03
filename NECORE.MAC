@@ -676,14 +676,14 @@ CSTOT:	.WORD	0			; the sum of the resources
 CSDTAB:	.WORD	100., 10.
 CSDTBE:
 
-; Lcbe0_draw_resource_counts_in_construction_screen: the numbers of the resources (columns 13..14, white)
-; and their sum (columns 12..14). TODO: the working copy of the resources (Lfd29), now those of the player.
+; Lcbe0_draw_resource_counts_in_construction_screen: the numbers of the resources (columns 14..15, white)
+; and their sum (columns 13..15). From the working copy of the resources (Lfd29).
 Lcbe0_draw_resource_counts:
 	MOV	#HUDBUF, R4
 	MOV	#2, HDIGS
 	MOV	#' , HFILL
-	MOV	#Lfd22_player1_resource_counts, R5
-	MOV	#<SCREEN+<9.*TILEH*LINEW>+13.>, HSCR
+	MOV	#CSRES, R5
+	MOV	#<SCREEN+<9.*TILEH*LINEW>+14.>, HSCR
 	MOV	#7, HCNT
 	CLR	CSTOT
 10$:	CLR	R0
@@ -700,7 +700,7 @@ Lcbe0_draw_resource_counts:
 20$:	DEC	HCNT
 	BNE	10$
 ; the sum: three characters, leading spaces
-	MOV	#<SCREEN+<18.*TILEH*LINEW>+12.>, (R4)+
+	MOV	#<SCREEN+<18.*TILEH*LINEW>+13.>, (R4)+
 	MOV	#7, (R4)+
 	CLR	(R4)+
 	MOV	CSTOT, R0
@@ -731,6 +731,346 @@ Lcbe0_draw_resource_counts:
 	PPUSTS	HUDBUF
 	RETURN
 
+; The icons of the 8 pieces (Lc85d): a block of 4x3 tiles for each, in columns 18..21, the bipod at the bottom
+; (the pieces go up in steps of 24 lines), the south-west graphic (the odd one: the copy shifted by 4 pixels).
+; The CPU draws them straight to the screen through the indirect access: the address in RA (176640), the data in
+; RD (176642); a word is the byte of the plane 2 (high) and of the plane 1 (low) of the screen byte at the address,
+; so both planes = yellow (the plane 0, which only the PPU reaches, stays black). The sprite is drawn bottom-up like
+; Ld315: its first row is skipped, at most 24 rows. The screen is black, so the mask is not needed.
+CSPCOL = 18.				; the column of the icons
+CSPNOT:	.WORD	0			; the bits cleared in the word to draw: 0 = yellow (planes 1 and 2), 377 = green (plane 2 only)
+CSPW:	.WORD	0			; the width of the sprite in bytes
+
+; Draws the icons of all the pieces: green = not selected, yellow = selected
+Lc85d_draw_pieces:
+	CLR	R4			; the piece 0..7
+10$:	MOV	#377, CSPNOT
+	BITB	CSBIT(R4), Lfd21_constr_selected_pieces
+	BEQ	20$
+	CLR	CSPNOT
+20$:	CALL	Lc85d_draw_piece_icon
+	INC	R4
+	CMP	R4, #8.
+	BLO	10$
+	RETURN
+
+; Draws the icon of the piece R4 (0..7) in the color CSPNOT
+Lc85d_draw_piece_icon:
+	MOV	R4, R0
+	ASL	R0
+	ASL	R0
+	INC	R0			; the direction 1: south-west
+	CLR	R1
+	BISB	Ld6c8_piece_graphic_indices(R0), R1
+	ASL	R1
+	INC	R1			; the shifted copy
+	ADD	#ISOADD, R1
+	ASL	R1
+	MOV	ISOPTR(R1), R3		; R3 = the sprite: height, width, then (mask, data) of the rows bottom-up
+	CLR	R1
+	BISB	(R3)+, R1		; height
+	CLR	R2
+	BISB	(R3)+, R2		; width
+	MOV	R2, CSPW
+	ASL	R2
+	ADD	R2, R3			; skip the first row
+	DEC	R1
+	CMP	R1, #24.
+	BLOS	20$
+	MOV	#24., R1
+20$:	MOV	#<SCREEN+<191.*LINEW>+CSPCOL>, R5	; the bottom row of the piece 0
+	MOV	R4, R0
+	BEQ	30$
+25$:	SUB	#<24.*LINEW>, R5	; the next piece goes up by 24 lines
+	SOB	R0, 25$
+30$:	MOV	R5, @#176640		; RA: the first byte of the row
+	MOV	CSPW, R2
+40$:	INC	R3			; the mask: skipped
+	CLR	R0
+	BISB	(R3)+, R0		; the data
+	MOV	R0, -(SP)
+	SWAB	R0
+	BIS	(SP)+, R0		; the byte in both planes
+	BIC	CSPNOT, R0
+	MOV	R0, @#176642
+	INC	@#176640		; the next byte of the row
+	SOB	R2, 40$
+	SUB	#LINEW, R5		; the row above
+	SOB	R1, 30$
+	RETURN
+
+; The state of the screen: the selected pieces (Lfd21_constr_selected_pieces, 1 bit per piece: 0 bipod, 1 tracks,
+; 2 anti-grav, 3 cannon, 4 missiles, 5 phasers, 6 nuclear, 7 electronics), the working copy of the resources of
+; the player (CSRES, the price of the robot is subtracted), the free robot structure (CSROB) for the preview.
+CSBIT:	.BYTE	1, 2, 4, 10, 20, 40, 100, 200
+; The costs of the pieces and the resource that pays for each: 6 chassis (bipod, tracks, anti-grav), 5 cannon,
+; 4 missiles, 3 phasers, 2 nuclear, 1 electronics (index in the resources; 0 = general)
+CSCOST:	.BYTE	3, 5, 10., 2, 4, 4, 20., 3
+CSTYPE:	.BYTE	6, 6, 6, 5, 4, 3, 2, 1
+CSRES:	.BLKB	8.
+CSROB:	.WORD	0
+CSPD:	.WORD	0			; the bit of the piece being toggled
+
+; Lcac1: R4 = the piece removed from the robot: its cost goes back to the working copy of the resources; what is
+; more than the player had goes to the general resources
+Lc85d_refund_piece:
+	CLR	R1
+	BISB	CSCOST(R4), R1
+	CLR	R0
+	BISB	CSTYPE(R4), R0
+	CLR	R2
+	BISB	CSRES(R0), R2
+	ADD	R1, R2			; the new count
+	CLR	R1
+	BISB	Lfd22_player1_resource_counts(R0), R1	; what the player had
+	CMP	R2, R1
+	BLOS	10$
+	SUB	R1, R2			; the excess
+	CLR	R3
+	BISB	CSRES, R3
+	ADD	R2, R3
+	MOVB	R3, CSRES
+	MOV	R1, R2			; capped
+10$:	MOVB	R2, CSRES(R0)
+	RETURN
+
+; FIRE on a piece: R4 = the piece 0..7. Selects it (a chassis replaces the chassis selected before; at most 3 of the
+; 4 weapons; the cost is paid from its resource, the shortage from the general resources) or removes it.
+; Then the icons, the numbers and the preview are drawn again.
+Lc85d_toggle_piece:
+	CLR	R3
+	BISB	CSBIT(R4), R3
+	MOV	R3, CSPD
+	BITB	R3, Lfd21_constr_selected_pieces
+	BEQ	10$
+	CALL	Lc85d_refund_piece	; it was selected: removed
+	BICB	CSPD, Lfd21_constr_selected_pieces
+	BR	90$
+10$:	CMP	R4, #3
+	BHIS	30$			; not a chassis
+	BITB	#7, Lfd21_constr_selected_pieces
+	BEQ	30$			; no chassis yet
+	MOV	R4, -(SP)		; replace the chassis: the selected one is removed
+	CLR	R4
+20$:	BITB	CSBIT(R4), Lfd21_constr_selected_pieces
+	BNE	25$
+	INC	R4
+	BR	20$
+25$:	CALL	Lc85d_refund_piece
+	BICB	#7, Lfd21_constr_selected_pieces
+	MOV	(SP)+, R4
+30$:	MOVB	Lfd21_constr_selected_pieces, R0
+	BIS	CSPD, R0
+	BIC	#177607, R0		; the weapons: bits 3..6
+	CMP	R0, #170
+	BEQ	90$			; all the 4 weapons: not allowed
+	CLR	R1
+	BISB	CSCOST(R4), R1		; the cost
+	CLR	R0
+	BISB	CSTYPE(R4), R0		; its resource
+	CLR	R2
+	BISB	CSRES(R0), R2
+	SUB	R1, R2
+	BHIS	40$			; enough
+	NEG	R2			; the shortage
+	CLR	R3
+	BISB	CSRES, R3
+	SUB	R2, R3
+	BLO	90$			; the general resources are not enough
+	MOVB	R3, CSRES
+	CLR	R2
+40$:	MOVB	R2, CSRES(R0)
+	BISB	CSPD, Lfd21_constr_selected_pieces
+90$:	CALL	Lc85d_draw_pieces
+	CALL	Lcbe0_draw_resource_counts
+	JMP	Lcc1f_update_pieces_and_preview
+
+; Lcc7c: sets the position of the robot R5: R3 = x, R4 = y. Marks the map cell as occupied and flips the robot in the
+; radar view (0 for a robot of the player, 1 for an enemy robot: the bit 7 of the control)
+Lcc7c_set_robot_position:
+	MOV	R3, ROBOT_STRUCT_X(R5)
+	MOVB	R4, ROBOT_STRUCT_Y(R5)
+	MOV	R4, R0
+	CALL	Lcca6_compute_map_ptr	; R3 = the map offset
+	MOV	R3, ROBOT_STRUCT_MAP_PTR(R5)
+	BISB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	MOV	ROBOT_STRUCT_X(R5), R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_Y(R5), R1
+	CLR	R2
+	TSTB	ROBOT_STRUCT_CONTROL(R5)
+	BPL	10$
+	INC	R2
+10$:	JMP	Ld65a_flip_2x2_radar_area
+
+; Lcb52: START ROBOT. Needs a chassis and a weapon (else nothing happens, C = 0). The price of the robot is taken from
+; the resources of the player, the robot is put 4 rows below the player (the entrance of the factory) and has the
+; selected pieces. C = 1: the robot is made, the screen is left. TODO: the sound.
+Lc85d_start_robot:
+	BITB	#7, Lfd21_constr_selected_pieces
+	BEQ	90$			; no chassis
+	BITB	#170, Lfd21_constr_selected_pieces
+	BEQ	90$			; no weapon
+	MOV	#CSRES, R0
+	MOV	#Lfd22_player1_resource_counts, R1
+	MOV	#4, R2
+10$:	MOV	(R0)+, (R1)+		; the resources without the price of the robot
+	SOB	R2, 10$
+	MOV	Lfd0e_player_x, R3
+	CLR	R4
+	BISB	Lfd0d_player_y, R4
+	ADD	#4, R4
+	MOV	CSROB, R5
+	MOVB	#ROBOT_CONTROL_AUTO, ROBOT_STRUCT_CONTROL(R5)
+	MOVB	Lfd21_constr_selected_pieces, ROBOT_STRUCT_PIECES(R5)
+	CALL	Lcc7c_set_robot_position
+	CALL	Lbb40_count_robots	; the HUD shows the number of robots
+	SEC
+	RETURN
+90$:	CLC
+	RETURN
+
+; Lbb40: counts the robots of each player (the numbers go to the table of the HUD)
+Lbb40_count_robots:
+	MOV	#Lda00_player1_robots, R5
+	CALL	Lbb50_count_player_robots
+	MOVB	R0, Lfd41_player1_robot_count
+	CALL	Lbb50_count_player_robots
+	MOVB	R0, Lfd49_player2_robot_count
+	RETURN
+
+; Lbb50: R5 = the table of the robots of a player (moves to the next table) => R0 = the number of the robots
+Lbb50_count_player_robots:
+	CLR	R0
+	MOV	#MAX_ROBOTS_PER_PLAYER, R1
+10$:	CMP	(R5), #NOSLOT
+	BEQ	20$
+	INC	R0
+20$:	ADD	#ROBOT_STRUCT_SIZE, R5
+	SOB	R1, 10$
+	RETURN
+
+; Lcc1f: the preview of the robot: it is drawn to the buffer (the original isometric coordinates 0a07), the block of
+; 4 bytes x 72 lines from the line 82 is copied to the screen, to the column 1 (the original has 0) and the line 120 (rows 15..23), yellow:
+; the byte goes to both planes (see the icons)
+PVW = 4.
+PVH = 72.
+Lcc1f_update_pieces_and_preview:
+	CALL	Lcffe_clear_5b00_buffer
+	MOV	CSROB, R5
+	MOVB	Lfd21_constr_selected_pieces, ROBOT_STRUCT_PIECES(R5)
+	MOV	#005007, R2		; the iso coordinates d = 0a, e = 07
+	CALL	Lcee8_draw_robot_to_buffer
+	MOVB	Lcf3f_sprite_elevation, ROBOT_STRUCT_HEIGHT(R5)
+	MOV	#<RNDBUF+<82.*VIEW_W>>, R3
+	MOV	#<SCREEN+<120.*LINEW>+1.>, R5
+	MOV	#PVH, R1
+10$:	MOV	R5, @#176640
+	MOV	#PVW, R2
+20$:	CLR	R0
+	BISB	(R3)+, R0
+	MOV	R0, -(SP)
+	SWAB	R0
+	BIS	(SP)+, R0
+	MOV	R0, @#176642
+	INC	@#176640
+	SOB	R2, 20$
+	ADD	#<VIEW_W-PVW>, R3
+	ADD	#LINEW, R5
+	SOB	R1, 10$
+	RETURN
+
+; The items of the screen, from the top: the pieces 7..0 (ELECTRONICS .. BIPOD), START ROBOT, EXIT MENU.
+; The blocks of their texts (CMDSTR), the ink word MNB_INK is changed to show the current one.
+CSBTAB:	.WORD	CSPN7, CSPN6, CSPN5, CSPN4, CSPN3, CSPN2, CSPN1, CSPN0, CSOPT1, CSOPT2
+CSCUR:	.WORD	0			; the current item 0..9
+CSNITM = 10.
+
+; R0 = item: the ink of its text to R1 (the current one is yellow, the pieces are cyan, the items white)
+Lc85d_item_ink:
+	MOV	#5, R1
+	CMP	R0, #8.
+	BLO	10$
+	MOV	#7, R1
+10$:	CMP	R0, CSCUR
+	BNE	20$
+	MOV	#6, R1
+20$:	RETURN
+
+; R0 = the item, R1 = its ink: sets the ink of its block and the mark before the text (">" for the current one).
+; Returns R2 = the block (all the blocks are made by MSTR: the text starts at the byte 6).
+Lc85d_set_block:
+	MOV	R0, R4
+	ASL	R4
+	MOV	CSBTAB(R4), R2
+	MOV	R1, MNB_INK(R2)
+	MOV	#' , R3
+	CMP	R1, #6
+	BNE	10$
+	MOV	#'>, R3
+10$:	MOVB	R3, 6(R2)
+	RETURN
+
+; Sets the ink words of all the item blocks (before they are drawn)
+Lc85d_set_item_inks:
+	CLR	R0
+10$:	MOV	R0, -(SP)
+	CALL	Lc85d_item_ink
+	MOV	(SP), R0
+	CALL	Lc85d_set_block
+	MOV	(SP)+, R0
+	INC	R0
+	CMP	R0, #CSNITM
+	BLO	10$
+	RETURN
+
+; Sets the ink of the item R0 and draws its text again (CMDSTR)
+Lc85d_redraw_item:
+	CALL	Lc85d_item_ink
+	CALL	Lc85d_set_block
+	CLC
+	ROR	R2			; the word address for the PPU
+10$:	TST	@#PPUCOM		; wait for the PPU to be free (it may still read PPUDAT)
+	BNE	10$
+	MOV	R2, @#PPUDAT
+	PPUCMW	#CMDSTR
+	RETURN
+
+; The cursor loop: up/down move the current item, STOP leaves. Returns R0 = the item where FIRE was pressed
+; (0..7 pieces by the screen order, 8 = START ROBOT, 9 = EXIT MENU), or -1 for STOP.
+Lc85d_cursor_loop:
+	MOV	@#PPUKEY, MNKEYO	; the keys held at the entry do not count
+10$:	MOV	@#PPUKEY, R0
+	MOV	R0, R1
+	BIC	MNKEYO, R1		; the keys pressed now
+	MOV	R0, MNKEYO
+	BIT	#PKEYST, R1
+	BNE	90$
+	BIT	#PKEYFR, R1
+	BNE	80$
+	BIT	#PKEYUP, R1
+	BEQ	20$
+	MOV	CSCUR, R3
+	BEQ	10$
+	DEC	R3
+	BR	30$
+20$:	BIT	#PKEYDN, R1
+	BEQ	10$
+	MOV	CSCUR, R3
+	CMP	R3, #<CSNITM-1>
+	BHIS	10$
+	INC	R3
+30$:	MOV	CSCUR, R0		; the old item: its ink changes first
+	MOV	R3, CSCUR
+	CALL	Lc85d_redraw_item
+	MOV	CSCUR, R0
+	CALL	Lc85d_redraw_item
+	BR	10$
+80$:	MOV	CSCUR, R0
+	RETURN
+90$:	MOV	#-1, R0
+	RETURN
+
 ; Checks if the player has less than the maximum number of robots, and if so, opens the construction
 ; screen with R5 pointing to a free robot structure.
 Lc849_construction_if_possible:
@@ -745,21 +1085,39 @@ Lc849_construction_if_possible:
 ; The robot construction screen. R5 = the free robot structure. A stub for now: it shows the title and
 ; waits for fire. TODO: the pieces, the resources, the preview, the new robot.
 Lc85d_robot_construction:
+	MOV	R5, CSROB
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)	; the robot faces south-east
+	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
+	CLRB	Lfd21_constr_selected_pieces	; nothing is selected
+	MOV	#Lfd22_player1_resource_counts, R0
+	MOV	#CSRES, R1
+	MOV	#4, R2
+5$:	MOV	(R0)+, (R1)+		; the working copy of the resources
+	SOB	R2, 5$
+	MOV	#7, CSCUR		; the cursor starts on the first piece (the bipod)
+	CALL	Lc85d_set_item_inks
 	PPUCMW	#CMDMENU		; the game area and the radar are not drawn
 	PPUCMW	#CMDCLS
 	PPUSTS	CSTEXT
 	CALL	Lcbe0_draw_resource_counts
-	CLR	MNSEL
-	MOVB	#'1, MNSCL		; the selected item keeps the height
-10$:	MOVHW	CSOPT1, R0
-	MOV	#CSTAB, R1
-	MOV	#2, R2
-	CALL	Lmenu_select
+	CALL	Lc85d_draw_pieces
+	CALL	Lcc1f_update_pieces_and_preview
+10$:	CALL	Lc85d_cursor_loop
 	TST	R0
 	BMI	20$			; STOP
+	CMP	R0, #9.
 	BEQ	20$			; EXIT MENU
-	BR	10$			; START ROBOT: TODO
-20$:	MOVB	#'2, MNSCL
+	CMP	R0, #8.
+	BNE	15$
+	CALL	Lc85d_start_robot	; START ROBOT
+	BCS	20$			; the robot is made: back to the game
+	BR	10$
+15$:
+	MOV	#7, R4
+	SUB	R0, R4			; the piece: the items go from the top, the pieces from ELECTRONICS
+	CALL	Lc85d_toggle_piece
+	BR	10$
+20$:
 ; the exit (Lcb8e_construction_screen_exit)
 	MOVB	#5, Lfd30_player_elevate_timer	; the player levitates a bit after exiting
 	CALL	Ld0ca_draw_in_game_screen

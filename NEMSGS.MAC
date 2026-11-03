@@ -166,49 +166,51 @@ CSTEXT:	.WORD	SCREEN+<0.*TILEH*LINEW>+2., 7, 0
 	.BYTE	4, '2
 	.ASCIZ	/CONSTRUCTION/
 	.EVEN
-	MSTR	6., 0., 6, 0, <-- RESOURCES -->
-	MSTR	7., 0., 6, 0, <-- AVAILABLE -->
-; the names are right aligned: they end in column 10, so the texts start in column 3 and are padded to 8 characters
-; with spaces at the left (the translation too), except ELECTRONICS (column 0, 11 characters)
-	MSTR	9., 3., 4, 0, < GENERAL>
-	MSTR	11., 0., 4, 0, <ELECTRONICS>
-	MSTR	12., 3., 4, 0, < NUCLEAR>
-	MSTR	13., 3., 4, 0, < PHASERS>
-	MSTR	14., 3., 4, 0, <MISSILES>
-	MSTR	15., 3., 4, 0, <  CANNON>
-	MSTR	16., 3., 4, 0, < CHASSIS>
-	MSTR	18., 3., 4, 0, <   TOTAL>
+	MSTR	6., 1., 6, 0, <-- RESOURCES -->
+	MSTR	7., 1., 6, 0, <-- AVAILABLE -->
+; the names are right aligned: they end in column 10, so the texts start in column 4 and are padded to 8 characters
+; with spaces at the left (the translation too), except ELECTRONICS (column 1, 11 characters)
+	MSTR	9., 4., 4, 0, < GENERAL>
+	MSTR	11., 1., 4, 0, <ELECTRONICS>
+	MSTR	12., 4., 4, 0, < NUCLEAR>
+	MSTR	13., 4., 4, 0, < PHASERS>
+	MSTR	14., 4., 4, 0, <MISSILES>
+	MSTR	15., 4., 4, 0, <  CANNON>
+	MSTR	16., 4., 4, 0, < CHASSIS>
+	MSTR	18., 4., 4, 0, <   TOTAL>
 ; the pieces: the names (cyan) and under them the costs (magenta)
 ;@ ROBOT CONSTRUCTION PIECES
-	MSTR	1., 21., 5, 0, <ELECTRONICS>
-	MSTR	2., 22., 3, 0, <3>
-	MSTR	4., 21., 5, 0, <NUCLEAR>
-	MSTR	5., 22., 3, 0, <20>
-	MSTR	7., 21., 5, 0, <PHASERS>
-	MSTR	8., 22., 3, 0, <4>
-	MSTR	10., 21., 5, 0, <MISSILES>
-	MSTR	11., 22., 3, 0, <4>
-	MSTR	13., 21., 5, 0, <CANNON>
-	MSTR	14., 22., 3, 0, <2>
-	MSTR	16., 21., 5, 0, <ANTI-GRAV>
-	MSTR	17., 22., 3, 0, <10>
-	MSTR	19., 21., 5, 0, <TRACKS>
-	MSTR	20., 22., 3, 0, <5>
-	MSTR	22., 21., 5, 0, <BIPOD>
-	MSTR	23., 22., 3, 0, <3>
+CSPN7:
+	MSTR	1., 22., 5, 0, < ELECTRONICS>
+	MSTR	2., 24., 3, 0, <3>
+CSPN6:
+	MSTR	4., 22., 5, 0, < NUCLEAR>
+	MSTR	5., 24., 3, 0, <20>
+CSPN5:
+	MSTR	7., 22., 5, 0, < PHASERS>
+	MSTR	8., 24., 3, 0, <4>
+CSPN4:
+	MSTR	10., 22., 5, 0, < MISSILES>
+	MSTR	11., 24., 3, 0, <4>
+CSPN3:
+	MSTR	13., 22., 5, 0, < CANNON>
+	MSTR	14., 24., 3, 0, <2>
+CSPN2:
+	MSTR	16., 22., 5, 0, < ANTI-GRAV>
+	MSTR	17., 24., 3, 0, <10>
+CSPN1:
+	MSTR	19., 22., 5, 0, < TRACKS>
+	MSTR	20., 24., 3, 0, <5>
+CSPN0:
+	MSTR	22., 22., 5, 0, < BIPOD>
+	MSTR	23., 24., 3, 0, <3>
+; START ROBOT and EXIT MENU go on in the same column with the same step of 3 rows. The current item is yellow
+; with ">" right before the text (the ink word and the first character of the block, a space or ">", are changed
+; by the CPU), the others white (the pieces: cyan). The place at the left is for the preview of the robot.
+CSOPT1:
+	MSTR	25., 22., 7, 0, < START ROBOT>
+CSOPT2:
+	MSTR	28., 22., 7, 0, < EXIT MENU>
 	.WORD	0
-
-;@ ROBOT CONSTRUCTION
-; The items on the left: the selected one is yellow with ">", normal height (MNSCL)
-CSOPT1:	.WORD	SCREEN+<22.*TILEH*LINEW>+0., 6, 0
-	.BYTE	4, '1
-	.ASCIZ	/> EXIT MENU/
-	.EVEN
-CSOPT2:	.WORD	SCREEN+<24.*TILEH*LINEW>+0., 7, 0
-	.BYTE	4, '1
-	.ASCIZ	/  START ROBOT/
-	.EVEN
-	.WORD	0
-CSTAB:	.WORD	CSOPT1, CSOPT2
 
 ; End of NEMSGS.MAC

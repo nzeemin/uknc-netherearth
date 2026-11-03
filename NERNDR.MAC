@@ -25,13 +25,17 @@ RBPIECE:			.WORD	0	; robot piece being drawn, 0..7
 
 ;------------------------------------------------------------------------------
 
-; Clears the frame buffer, draws the basic map frame (the two diagonal cut-out patterns).
-Lcfd7_draw_blank_map_in_buffer:
-; Lcffe: clear the buffer
+; Clears the frame buffer
+Lcffe_clear_5b00_buffer:
 	MOV	#RNDBUF, R0
 	MOV	#<VIEW_BYTES/2>, R1
 10$:	CLR	(R0)+
 	SOB	R1, 10$
+	RETURN
+
+; Clears the frame buffer, draws the basic map frame (the two diagonal cut-out patterns).
+Lcfd7_draw_blank_map_in_buffer:
+	CALL	Lcffe_clear_5b00_buffer
 ; Ld026: draw the top left diagonal black part, 5 blocks of 8 lines with 10, 8, 6, 4, 2 bytes filled
 	MOV	#RNDBUF, R0
 	MOV	#<VIEW_W/2>, R1		; bytes filled in a line

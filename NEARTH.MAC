@@ -171,7 +171,7 @@ GAMESC:	; String for game screen preparing
 	.BYTE	33,242,60		; Back color
 	.BYTE	14			; Clear screen
 	.BYTE	33,247,60		; Cursor color
-	.BYTE	033,131,61,40		; Cursor position
+	.BYTE	033,131,66,40		; Cursor position
 	.BYTE	0
 EXITSC:	; String for screen cleanup before the exit
 	.BYTE	33,246,061		; Screen format 80x24
