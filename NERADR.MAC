@@ -8,8 +8,6 @@
 Ld800_radar_view1:	.BLKB	256.
 Ld900_radar_view2:	.BLKB	256.
 
-RADROW:	.WORD	0			; row counter
-
 ; Lb048: makes the player blink in the radar (visible / not visible) and updates the radar
 Lb048_update_radar:
 	CALL	Lb036_flicker_player_in_radar
@@ -37,13 +35,12 @@ Lb036_flicker_player_in_radar:
 ; Updates the two radar buffers with all the buildings and robots in the map.
 Ld5f8_update_radar_buffers:
 	MOV	#Ld800_radar_view1, R4	; buffer pointer
-	MOV	Lfd1c_radar_scroll_x, R2	; map offset of the first cell of the first row
-	MOV	#16., RADROW
+	MOV	Lfd1c_radar_scroll_x, R2
+	ADD	#Ldd00_map, R2		; the address of the first cell of the first row (the map base is added once)
 10$:	MOV	R2, R3			; map pointer
 	MOV	#16., R1		; bytes in a row
 20$:	.REPT	8.
-	MOVB	Ldd00_map(R3), R0
-	INC	R3
+	MOVB	(R3)+, R0
 	BIC	#177740, R0		; type of the map element
 	CMP	#14., R0		; C = 1 if the element is a building: type >= 15 (as in the original code)
 	RORB	R5			; the first cell ends up in bit 0 after 8 steps
@@ -52,7 +49,7 @@ Ld5f8_update_radar_buffers:
 	DEC	R1
 	BNE	20$
 	ADD	#1000, R2		; y++
-	DEC	RADROW
+	CMP	R4, #Ld900_radar_view2	; the end of the first view (the views are one block): 16 rows done
 	BNE	10$
 ; Sync both views: the enemy view starts as a copy of the first one
 	MOV	#Ld800_radar_view1, R0
