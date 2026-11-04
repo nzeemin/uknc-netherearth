@@ -101,6 +101,50 @@ La600_start:
 .IF DF TESTFIRE
 	CALL	TESTFI			; a shot (see TESTFI)
 .ENDC
+.IF DF TESTAI
+	CALL	Lnew_game		; the whole game without the player: two robots of the player (a cannon robot that hunts the robots, a robot with a
+	MOV	#Lda00_player1_robots, R5	; cannon that captures neutral factories) and the AI of the enemy
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#ORDERS_DESTROY_ENEMY_ROBOTS, ROBOT_STRUCT_ORDERS(R5)
+	MOV	#45., R3
+	CALL	TAMK
+	MOV	#<Lda00_player1_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#ORDERS_CAPTURE_NEUTRAL_FACTORIES, ROBOT_STRUCT_ORDERS(R5)
+	MOV	#34., R3
+	CALL	TAMK
+	CALL	Lbb40_count_robots
+.ENDC
+.IF DF TESTAIO
+	CALL	Lnew_game		; new orders of a robot of the enemy, 64 times: the histogram of the orders in AIOCNT
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)	; TESTAIOB: with the nuclear bomb
+.IF DF TESTAIOB
+	MOVB	#<9.+64.>, ROBOT_STRUCT_PIECES(R5)
+.ENDC
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#377, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	#200, ROBOT_STRUCT_CONTROL(R5)
+	MOVB	#1, Lfd51_robot_player_or_enemy
+	MOV	#60., R3
+	MOV	#8., R4
+	CALL	Lcc7c_set_robot_position
+	MOV	#64., AIOI
+10$:	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	CALL	Lb95d_assign_new_orders
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	ASL	R0
+	INC	AIOCNT(R0)
+	DEC	AIOI
+	BNE	10$
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOVB	#4, ROBOT_STRUCT_ORDERS(R5)	; the robot has orders: Lb920 keeps them mostly
+.ENDC
+.IF DF TESTAIB
+	CALL	Lnew_game		; the enemy builds robots (nothing else is set up)
+	CALL	Lbb40_count_robots
+.ENDC
 .IF DF TESTBOMB
 	CALL	Lnew_game		; a robot at (39, 5): the bomb destroys the factory 0 at (39, 6); TESTBOMBC: at (44, 5), TESTBOMBD:
 	MOV	#Lda00_player1_robots, R5	; at (43, 8): out of the range
@@ -241,6 +285,15 @@ LANDING = 1
 LANDING = 1
 .ENDC
 .IF DF TESTBOMB
+LANDING = 1
+.ENDC
+.IF DF TESTAIB
+LANDING = 1
+.ENDC
+.IF DF TESTAIO
+LANDING = 1
+.ENDC
+.IF DF TESTAI
 LANDING = 1
 .ENDC
 .ENDC
@@ -924,6 +977,7 @@ Lrb_hud:
 10$:	RETURN
 
 Lb0ca_update_robots_and_ai:
+	CALL	Lb7f4_update_enemy_ai
 	MOV	#Lda00_player1_robots, R5
 	MOV	#<MAX_ROBOTS_PER_PLAYER*2>, R4
 10$:	CMP	(R5), #NOSLOT
@@ -1112,8 +1166,9 @@ Lb116_robot_destroyed:
 ; The robot R5 acts when its counter of the cycles is 0
 Lb154_robot_ai_update:
 	CMPB	ROBOT_STRUCT_CONTROL(R5), #ROBOT_CONTROL_PLAYER_LANDED
-	BEQ	Lb154_exit		; the player is on top of the robot
-	CLRB	Lfd51_robot_player_or_enemy
+	BNE	3$
+	RETURN				; the player is on top of the robot
+3$:	CLRB	Lfd51_robot_player_or_enemy
 	TSTB	ROBOT_STRUCT_CONTROL(R5)
 	BPL	10$
 	INCB	Lfd51_robot_player_or_enemy	; the enemy AI
@@ -1201,7 +1256,9 @@ Lb1f5_move_in_a_new_direction:
 	CALL	Lb505_count_directions
 	BCS	10$				; no possible direction
 	CALL	Lb222_choose_direction_to_move
-10$:	MOVB	R4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)	; TODO: the robot destroyed by the order (Lb99f)
+10$:	CMP	(R5), #NOSLOT
+	BEQ	Lb154_exit			; the robot was destroyed by its orders (the nuclear bomb)
+	MOVB	R4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
 	JMP	Lb20d_move_robot
 Lb154_exit:
 	RETURN
@@ -2044,6 +2101,229 @@ Lb20d_move_robot:
 	JMP	Lcc7c_set_robot_position
 
 ;------------------------------------------------------------------------------
+; Lb7f4: the AI of the enemy (every cycle, first in Lb0ca). With the probability 1/4 nothing. A random robot of the
+; enemy (0..23): if the slot is free the enemy tries to build a robot in a random warbase of its own (TODO: the
+; control of the robot that exists: Lb920).
+AIX:	.WORD	0			; the position of the warbase
+AIY:	.WORD	0
+AIB:	.WORD	0			; the warbases left
+.IF DF TESTAIO
+AIOI:	.WORD	0
+AIOCNT:	.BLKW	9.
+.ENDC
+AID:	.WORD	0			; the general resources needed by the robot
+AIRES:	.BLKB	8.			; the working copy of the resources of the enemy
+AIHGT:	.BYTE	11., 7, 8., 6, 6, 7, 7, 7	; the heights of the pieces (Ld7b4)
+Lb7f4_update_enemy_ai:
+	CALL	Ld358_random
+	BIC	#^C37, R0
+	CMP	R0, #MAX_ROBOTS_PER_PLAYER
+	BHIS	90$				; 1/4: nothing
+	ASH	#4, R0				; * ROBOT_STRUCT_SIZE
+	ADD	#Ldb80_player2_robots, R0
+	MOV	R0, R5				; a random robot of the enemy
+	MOVB	#1, Lfd51_robot_player_or_enemy
+	CMP	(R5), #NOSLOT
+	BEQ	5$
+	JMP	Lb920_enemy_ai_control_robot	; the slot is used: the control of the robot
+5$:
+	MOV	#Lfd70_warbases, R4
+	MOV	#N_WARBASES, AIB
+10$:	CALL	Ld358_random
+	BIT	#1, R0
+	BEQ	20$
+	CMPB	BUILDING_STRUCT_TYPE(R4), #40
+	BEQ	Lb0ca_enemy_ai_control_warbase	; a warbase of the enemy that is not destroyed
+20$:	ADD	#BUILDING_STRUCT_SIZE, R4
+	DEC	AIB
+	BNE	10$
+90$:	RETURN
+
+; The enemy builds a robot in the warbase R4 in the free slot R5: the entrance must be free, the pieces are random: one
+; chassis, 1..3 weapons (not none, not all 4) and at least (the robots of the enemy / 8 + 1) & 3 of them (as in the
+; original, where the comment says "at most"), the resources must be enough: the shortage goes to the general ones, of
+; which at most a half (but 11 at least) can be spent.
+Lb0ca_enemy_ai_control_warbase:
+	MOV	BUILDING_STRUCT_X(R4), R3
+	MOV	R3, AIX
+	CLR	R0
+	BISB	BUILDING_STRUCT_Y(R4), R0
+	MOV	R0, AIY
+	CALL	Lcca6_compute_map_ptr
+	MOVB	Ldd00_map(R3), R0		; the entrance: 4 cells
+	BISB	Ldd00_map+MAP_LENGTH(R3), R0
+	BISB	Ldd00_map+MAP_LENGTH-1(R3), R0
+	BISB	Ldd00_map+MAP_LENGTH+1(R3), R0
+	BIT	#MAPB_OCCUPIED, R0
+	BNE	17$			; blocked
+	CALL	Ld358_random			; (twice in the original, too)
+	CALL	Ld358_random
+	MOV	R0, R2				; c
+	MOVB	R2, ROBOT_STRUCT_PIECES(R5)
+	BIC	#^C7, R0
+	CMP	R0, #1
+	BEQ	10$
+	CMP	R0, #2
+	BEQ	10$
+	CMP	R0, #4
+	BNE	17$			; not exactly one chassis
+10$:	MOV	R2, R0
+	ASH	#-3, R0
+	BIC	#^C17, R0			; the weapons
+	BEQ	17$
+	CMP	R0, #17
+	BEQ	17$			; none or all 4
+	MOV	R0, R4
+	CLR	R1
+	BISB	Lfd49_player2_robot_count, R1
+	ASH	#-3, R1
+	INC	R1
+	BIC	#^C3, R1			; b
+	MOV	R1, -(SP)
+	CALL	Lb505_count_directions		; R0 = the number of the weapons
+	MOV	(SP)+, R1
+	CMP	R0, R1
+	BHIS	18$
+17$:	RETURN
+18$:
+	MOV	#Lfd4a_player2_resource_counts, R0	; the resources of the enemy: a working copy
+	MOV	#AIRES, R1
+	MOV	#4, R3
+20$:	MOV	(R0)+, (R1)+
+	SOB	R3, 20$
+	CLR	AID
+	CLR	R2
+	BISB	ROBOT_STRUCT_PIECES(R5), R2
+	CLR	R3				; the piece
+30$:	ASR	R2
+	BCC	40$
+	CLR	R0
+	BISB	CSCOST(R3), R0
+	CLR	R1
+	BISB	CSTYPE(R3), R1
+	MOVB	AIRES(R1), R4
+	SUB	R0, R4
+	BGE	35$
+	NEG	R4				; the shortage: general resources
+	ADD	R4, AID
+	CLR	R4
+35$:	MOVB	R4, AIRES(R1)
+40$:	INC	R3
+	CMP	R3, #8.
+	BNE	30$
+	CLR	R0
+	BISB	AIRES, R0
+	ASR	R0
+	CMP	R0, #11.
+	BHIS	50$
+	MOV	#11., R0
+50$:	CMP	R0, AID
+	BLO	Lb7f4_ret			; too many general resources
+	CLR	R0
+	BISB	AIRES, R0
+	SUB	AID, R0
+	BLT	Lb7f4_ret			; not enough
+	MOVB	R0, AIRES
+	MOV	#AIRES, R0			; the price is paid
+	MOV	#Lfd4a_player2_resource_counts, R1
+	MOV	#4, R3
+60$:	MOV	(R0)+, (R1)+
+	SOB	R3, 60$
+; the robot starts: down from the entrance, STOP AND DEFEND
+	MOVB	#ROBOT_CONTROL_ENEMY_AI, ROBOT_STRUCT_CONTROL(R5)
+	MOV	AIX, R3
+	MOV	AIY, R4
+	CALL	Lcc7c_set_robot_position
+	MOVB	#4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#3, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
+	CLRB	ROBOT_STRUCT_ORDERS(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CLR	R2				; the height: the sum of the heights of the pieces
+	BISB	ROBOT_STRUCT_PIECES(R5), R2
+	CLR	R3
+	CLR	R1
+70$:	ASR	R2
+	BCC	80$
+	CLR	R0
+	BISB	AIHGT(R1), R0
+	ADD	R0, R3
+80$:	INC	R1
+	CMP	R1, #8.
+	BNE	70$
+	MOVB	R3, ROBOT_STRUCT_HEIGHT(R5)
+	CALL	Lbb40_count_robots
+	JMP	Lrb_hud
+Lb7f4_ret:
+	RETURN
+
+;------------------------------------------------------------------------------
+; Lb920: the enemy AI controls the robot R5. STOP AND DEFEND: new orders. Else 31 of 32 times nothing; orders that are not
+; against buildings (< 4): new orders; against a building: new orders if the flags of the target are the wanted ones
+; (in the original `jr z`, probably meant `nz`: kept as in the original), or the robot is not on the target; the robot
+; on the target keeps its orders.
+Lb920_enemy_ai_control_robot:
+	CLR	R1
+	BISB	ROBOT_STRUCT_ORDERS(R5), R1
+	BEQ	Lb95d_assign_new_orders
+	CALL	Ld358_random
+	BIT	#37, R0
+	BNE	90$				; 31/32: the orders are kept
+	CMP	R1, #ORDERS_DESTROY_ENEMY_FACTORIES
+	BLO	Lb95d_assign_new_orders
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5), R0
+	CALL	Lb2b0_building_ptr		; R1 = the target building, R2 = the flags wanted
+	MOVB	BUILDING_STRUCT_TYPE(R1), R0
+	BIC	#^C340, R0
+	CMP	R0, R2
+	BEQ	Lb95d_assign_new_orders
+	CMPB	ROBOT_STRUCT_Y(R5), BUILDING_STRUCT_Y(R1)
+	BNE	Lb95d_assign_new_orders
+	CMP	ROBOT_STRUCT_X(R5), BUILDING_STRUCT_X(R1)
+	BNE	Lb95d_assign_new_orders
+90$:	RETURN				; on the target: the orders are kept
+
+; Lb95d: new orders of the robot R5: with the nuclear bomb (the piece bit 6) destroy the factories or the warbases of the
+; player at random, else capture at random the neutral factories, the factories or the warbases of the player; then
+; the target (Lb989): none: DESTROY ENEMY ROBOTS
+Lb95d_assign_new_orders:
+	BITB	#100, ROBOT_STRUCT_PIECES(R5)
+	BEQ	Lb976_no_nuclear
+	CALL	Ld358_random
+	MOV	R0, R2
+	ASH	#-7, R2
+	BIS	R0, R2				; the bit 0: the bit 7 | the bit 0 (rlca, or)
+	BIC	#^C1, R2
+	ADD	#ORDERS_DESTROY_ENEMY_FACTORIES, R2
+	BR	Lb989_orders_assigned
+Lb976_no_nuclear:
+	CALL	Ld358_random
+	CLR	R2
+	BIT	#1, R0
+	BNE	10$
+	INC	R2
+	BIT	#2, R0
+	BNE	10$
+	INC	R2
+10$:	ADD	#ORDERS_CAPTURE_NEUTRAL_FACTORIES, R2
+Lb989_orders_assigned:
+	MOVB	R2, ROBOT_STRUCT_ORDERS(R5)
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CALL	Lb34d_find_target
+	MOVB	R2, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CMP	R2, #377
+	BNE	90$
+	MOVB	#ORDERS_DESTROY_ENEMY_ROBOTS, ROBOT_STRUCT_ORDERS(R5)	; no target
+90$:	RETURN
+
+;------------------------------------------------------------------------------
 ; The destruction of the buildings (for the nuclear bomb)
 
 ; Lbc1c: marks the building R0 of the array R4 (Lfd70_warbases, Lfd84_factories) as destroyed (the type 200) and
@@ -2126,6 +2406,17 @@ TBMK:	MOV	R5, -(SP)
 	MOV	(SP)+, R5
 	RETURN
 .ENDC
+.IF DF TESTAI
+TAMK:	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#18., ROBOT_STRUCT_HEIGHT(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	CLRB	ROBOT_STRUCT_CONTROL(R5)
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CLRB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	MOV	#8., R4
+	JMP	Lcc7c_set_robot_position
+.ENDC
 ; Lb99f: the nuclear bomb of the robot R5: destroys at most one building (the first found: the warbases first) near
 ; the robot: the distance in y: |y + 1 (+ 4 for a warbase) - y of the building| and in x: |x - x of the building| both
 ; < 7 and their sum < 10 for a warbase, < 5 and < 7 for a factory. The robot is destroyed too (by Lb0fa in the next
@@ -2184,8 +2475,12 @@ Lb99f_fire_nuclear_bomb:
 70$:	MOV	(SP), R5
 	CALL	Lba02_nuclear_window
 	MOV	(SP)+, R5
-	CLRB	ROBOT_STRUCT_STRENGTH(R5)	; the robot is destroyed
-	CALL	Lcca0_compute_player_map_ptr	; the player is on the map again (the debris may have covered the mark)
+	CMP	(R5), #NOSLOT
+	BEQ	75$				; already destroyed in the window
+	MOV	(R5), R3			; the robot is destroyed: its mark is off the map, the slot is free
+	BICB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	MOV	#NOSLOT, (R5)
+75$:	CALL	Lcca0_compute_player_map_ptr	; the player is on the map again (the debris may have covered the mark)
 	BISB	#MAPB_PLAYER, Ldd00_map(R3)
 	MOVB	#1, Lfd52_update_radar_buffer_signal
 	CALL	Lbb40_count_robots
