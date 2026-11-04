@@ -524,8 +524,7 @@ Lcf2d_draw_sprite_to_buffer:
 	SUB	#VIEW_W, R5
 	MOV	R5, Lcfaf_left_pixel_skip
 45$:	SUB	#2, R0
-	DEC	R5
-	BNE	45$
+	SOB	R5, 45$
 ; buffer pointer = RNDBUF + h * VIEW_W + x
 50$:	MOV	R4, R5
 	MUL	#VIEW_W, R5
@@ -548,8 +547,7 @@ Lcf2d_draw_sprite_to_buffer:
 	SUB	#VIEW_W, SPROWD
 	CMP	SPROWD, #RNDBUF
 	BLO	90$			; out of the buffer
-	DEC	R1
-	BNE	60$
+	SOB	R1, 60$
 90$:	MOV	(SP)+, R5
 	RETURN
 

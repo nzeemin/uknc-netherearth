@@ -80,7 +80,7 @@ PMAIN:	TST	PMODE
 	ASL	R0
 	ADD	R0, PC
 	JMP	PMAIN			; 0 - no command
-	JMP	PSOUND			; 1 - play sound 1
+	JMP	PDONE			; 1 - play sound 1 (PSOUND is a stub)
 	JMP	PPRINT			; 2 - print string
 	JMP	PFRAME			; 3 - draw the frame
 	JMP	PPRSTS			; 4 - print a list of strings
@@ -193,7 +193,11 @@ DRVIEW:
 	MOV	#177014, R5		; mem data
 	MOV	#177024, R3		; pix data
 ; set colors once per pass
+.IF EQ VINK
+	CLR	@#177016		; INK color
+.IFF
 	MOV	#VINK, @#177016		; INK color
+.ENDC
 	MOV	PC, R0
 	ADD	#COLTBL-., R0
 	ADD	#VPAPER*4, R0		; COLTBL entry = 2 words = 4 bytes

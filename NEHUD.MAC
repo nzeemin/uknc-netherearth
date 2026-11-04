@@ -133,8 +133,6 @@ HBCNTS:	MOV	#1, HDIGS
 	MOV	HSCR2, R1
 	MOV	#7, R2
 	CLR	R3
-	CALL	HBNUM
-	RETURN
 
 ; Appends a string block with a number to the buffer at R4: R0 = value (0..99), R1 = screen address,
 ; R2 = ink, R3 = paper index; HDIGS = number of digits (1 or 2), HFILL = the character for the

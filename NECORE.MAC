@@ -17,9 +17,8 @@ La600_start:
 .IF NDF NOMENU
 	CALL	Lc100_title_screen	; the main menu (the tests skip it: NOMENU)
 	TST	R0
-	BPL	5$
-	JMP	Lgame_exit		; STOP in the menu: exit
-5$:	CALL	Lnew_game
+	BMI	Lgame_exit		; STOP in the menu: exit
+	CALL	Lnew_game
 .ENDC
 .IF DF TESTNEW
 	CALL	Lnew_game
@@ -32,10 +31,10 @@ La600_start:
 	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
 	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
 	MOVB	#18., ROBOT_STRUCT_HEIGHT(R5)
-	MOVB	#ROBOT_CONTROL_AUTO, ROBOT_STRUCT_CONTROL(R5)
+	CLRB	ROBOT_STRUCT_CONTROL(R5)		; ROBOT_CONTROL_AUTO = 0
 	MOVB	#4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
 	MOVB	#5, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
-	MOVB	#ORDERS_STOP_AND_DEFEND, ROBOT_STRUCT_ORDERS(R5)
+	CLRB	ROBOT_STRUCT_ORDERS(R5)		; ORDERS_STOP_AND_DEFEND = 0
 	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
 	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
 	MOV	#22., R3
@@ -131,7 +130,7 @@ La70d_game_loop_continue:
 	CALL	Lpause_menu		; STOP: the pause menu
 	TST	R0
 	BEQ	La69a_game_loop		; CONTINUE
-	JMP	La600_start		; ABORT GAME: the main menu
+	BR	La600_start		; ABORT GAME: the main menu
 .ENDC
 ;
 ; Exit: stop the PPU program, then (normal build) restore the palette and the screen and leave the
@@ -595,15 +594,13 @@ Lbb86_assign_warbase_to_player:
 	TST	R2
 	BEQ	10$
 	MOV	#8., R1				; the flag of the enemy
-	CALL	Lbc43_add_decoration_to_map
-	RETURN
+	BR	Lbc43_add_decoration_to_map
 10$:	SUB	#4, R3
 	CLR	R1				; "H"
 	CALL	Lbc43_add_decoration_to_map
 	SUB	#4, R3
 	MOV	#7, R1				; the flag of the player
-	CALL	Lbc43_add_decoration_to_map
-	RETURN
+	BR	Lbc43_add_decoration_to_map
 
 ; Counts the warbases and the factories of each type of each player
 Lbb09_update_base_factory_counts:
@@ -895,7 +892,7 @@ Lcombat_mode:
 	MOV	#CMLIST, RMLST
 	MOV	#CMNIT, RMCNT
 	MOV	#<CMNIT-1>, RMCUR	; STOP COMBAT
-	JMP	Lrm_menu
+	BR	Lrm_menu
 
 ; ----- GIVE ORDERS (La971): the menus of the orders; the texts are in NEMSGS.MAC, [ROBOT ORDERS]
 RMMIL:	.WORD	0			; the distance in miles
@@ -956,10 +953,9 @@ Lgive_orders:
 	CLRB	ROBOT_STRUCT_ORDERS(R5)	; STOP AND DEFEND
 	RETURN
 10$:	CMP	R0, #3
-	BHIS	20$
-	JMP	Lorders_miles		; ADVANCE (1), RETREAT (2)
-20$:	SUB	#3, R0			; 0 = DESTROY, 1 = CAPTURE
-	JMP	Lorders_target
+	BLO	Lorders_miles		; ADVANCE (1), RETREAT (2)
+	SUB	#3, R0			; 0 = DESTROY, 1 = CAPTURE
+	BR	Lorders_target
 90$:	RETURN
 
 ; ADVANCE / RETREAT (R0 = 1 / 2): the distance in miles, up/down by 5 miles, 0..50, FIRE: done (1 mile = 2 units;
@@ -1300,7 +1296,7 @@ Lc85d_toggle_piece:
 	BISB	CSPD, Lfd21_constr_selected_pieces
 90$:	CALL	Lc85d_draw_pieces
 	CALL	Lcbe0_draw_resource_counts
-	JMP	Lcc1f_update_pieces_and_preview
+	BR	Lcc1f_update_pieces_and_preview
 
 ; Lcc7c: sets the position of the robot R5: R3 = x, R4 = y. Marks the map cell as occupied and flips the robot in the
 ; radar view (0 for a robot of the player, 1 for an enemy robot: the bit 7 of the control)
@@ -1338,13 +1334,13 @@ Lc85d_start_robot:
 	BISB	Lfd0d_player_y, R4
 	ADD	#4, R4
 	MOV	CSROB, R5
-	MOVB	#ROBOT_CONTROL_AUTO, ROBOT_STRUCT_CONTROL(R5)
+	CLRB	ROBOT_STRUCT_CONTROL(R5)		; ROBOT_CONTROL_AUTO = 0
 	MOVB	Lfd21_constr_selected_pieces, ROBOT_STRUCT_PIECES(R5)
 	CALL	Lcc7c_set_robot_position
 	MOV	CSROB, R5		; the initial state of the new robot
 	MOVB	#4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)	; moves down by default
 	MOVB	#5, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)	; walks 5 steps after leaving the base, and stops
-	MOVB	#ORDERS_STOP_AND_DEFEND, ROBOT_STRUCT_ORDERS(R5)
+	CLRB	ROBOT_STRUCT_ORDERS(R5)		; ORDERS_STOP_AND_DEFEND = 0
 	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
 	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
 	CALL	Lbb40_count_robots	; the HUD shows the number of robots

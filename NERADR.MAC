@@ -10,6 +10,12 @@ Ld900_radar_view2:	.BLKB	256.
 
 RADROW:	.WORD	0			; row counter
 
+; Lb048: makes the player blink in the radar (visible / not visible) and updates the radar
+Lb048_update_radar:
+	CALL	Lb036_flicker_player_in_radar
+	INCB	Lfd1e_player_visible_in_radar
+	;BR	Lb029_update_radar_view
+
 ; Update the radar view if necessary: rebuild the buffers if the signal is set, then the player
 ; (blinking in view 1).
 Lb029_update_radar_view:
@@ -25,14 +31,8 @@ Lb036_flicker_player_in_radar:
 	CLR	R1
 	BISB	Lfd0d_player_y, R1
 	CLR	R2
-	CALL	Ld65a_flip_2x2_radar_area
+	BR	Ld65a_flip_2x2_radar_area
 10$:	RETURN
-
-; Lb048: makes the player blink in the radar (visible / not visible) and updates the radar
-Lb048_update_radar:
-	CALL	Lb036_flicker_player_in_radar
-	INCB	Lfd1e_player_visible_in_radar
-	BR	Lb029_update_radar_view
 
 ; Updates the two radar buffers with all the buildings and robots in the map.
 Ld5f8_update_radar_buffers:
@@ -117,7 +117,7 @@ Ld65a_flip_2x2_radar_area:
 	SUB	#16., R4
 	BIC	#177400, R4		; the previous row, wrapping inside of the 256 bytes of the view
 	ADD	R3, R4
-	CALL	Ld65a_flip_two_cells
+	BR	Ld65a_flip_two_cells
 90$:	RETURN
 
 ; Flips the cell R0 (a bit) in the byte R4 and the next cell to the right
