@@ -78,6 +78,12 @@ La600_start:
 .IF DF TESTTGT
 	CALL	TESTTG			; the search of the target (see TESTTG)
 .ENDC
+.IF DF TESTRAY
+	CALL	TESTRY			; the rays (see TESTRY)
+.ENDC
+.IF DF TESTFIRE
+	CALL	TESTFI			; a shot (see TESTFI)
+.ENDC
 .IF DF TESTSEEK
 	CALL	Lnew_game		; a robot of the player (orders 3) at x = 45 looks for the enemy robot at x = 60
 	MOV	#60., R3
@@ -143,6 +149,12 @@ LANDING = 1
 LANDING = 1
 .ENDC
 .IF DF TESTSEEK
+LANDING = 1
+.ENDC
+.IF DF TESTRAY
+LANDING = 1
+.ENDC
+.IF DF TESTFIRE
 LANDING = 1
 .ENDC
 .ENDC
@@ -837,6 +849,139 @@ Lb0ca_update_robots_and_ai:
 	MOV	(SP)+, R4
 20$:	ADD	#ROBOT_STRUCT_SIZE, R5
 	SOB	R4, 10$
+	MOV	#Ld7d3_bullets, R5
+	MOV	#MAX_BULLETS, R4
+30$:	CMP	(R5), #NOSLOT
+	BEQ	40$			; no bullet in this slot
+	MOV	R4, -(SP)
+	MOV	R5, -(SP)
+	CALL	Lb70d_bullet_update
+	MOV	(SP)+, R5
+	MOV	(SP)+, R4
+40$:	ADD	#BULLET_STRUCT_SIZE, R5
+	SOB	R4, 30$
+	RETURN
+
+; ----- The bullets. The sound (Lfd53) is a TODO.
+; Lb6b8: R4 = the robot that fires => R5 = a free bullet of its side (the player: the slots 1 and 2, the enemy: 3 and
+; 4, the slot 0 is for the combat mode of the player), Z: found
+Lb6b8_find_new_bullet_ptr:
+	MOV	#<Ld7d3_bullets+BULLET_STRUCT_SIZE>, R5
+	TSTB	ROBOT_STRUCT_CONTROL(R4)
+	BPL	10$
+	ADD	#<BULLET_STRUCT_SIZE*2>, R5
+10$:	CMP	(R5), #NOSLOT
+	BEQ	20$
+	ADD	#BULLET_STRUCT_SIZE, R5
+	CMP	(R5), #NOSLOT
+20$:	RETURN
+
+; Lb6d6: R0 = the weapon (1 cannon, 2 missiles, 3 phasers), R5 = the bullet, R4 = the robot that fires
+Lb6d6_weapon_fire:
+	MOVB	R0, BULLET_STRUCT_TYPE(R5)
+	MOV	#WEAPON_RANGE_DEFAULT, R1
+	CMP	R0, #2
+	BNE	10$
+	MOV	#WEAPON_RANGE_MISSILES, R1	; the missiles go further
+10$:	TSTB	ROBOT_STRUCT_PIECES(R4)
+	BPL	20$
+	INC	R1				; the electronics: +1
+20$:	MOVB	R1, BULLET_STRUCT_RANGE(R5)
+	MOVB	ROBOT_STRUCT_DIRECTION(R4), BULLET_STRUCT_DIRECTION(R5)
+	MOVB	#10., BULLET_STRUCT_ALTITUDE(R5)
+	MOV	ROBOT_STRUCT_X(R4), R3
+	CLR	R0
+	BISB	ROBOT_STRUCT_Y(R4), R0
+	MOV	R0, R4
+	BR	Lb724_bullet_update_internal
+
+; Lb70d: the update of the bullet R5 (every cycle): the range, the step, the hit
+Lb70d_bullet_update:
+	MOV	BULLET_STRUCT_MAP_PTR(R5), R3
+	BICB	#MAPB_OCCUPIED, Ldd00_map(R3)	; the bullet is off the map
+	DECB	BULLET_STRUCT_RANGE(R5)
+	BEQ	Lb7ea_bullet_disappear
+	MOV	BULLET_STRUCT_X(R5), R3
+	CLR	R4
+	BISB	BULLET_STRUCT_Y(R5), R4
+; R3 = x, R4 = y, R5 = the bullet: 2 cells in its direction
+Lb724_bullet_update_internal:
+	CLR	R0
+	BISB	BULLET_STRUCT_DIRECTION(R5), R0
+	BIT	#1, R0
+	BEQ	10$
+	ADD	#2, R3				; right
+	BR	50$
+10$:	BIT	#2, R0
+	BEQ	20$
+	SUB	#2, R3				; left
+	BR	50$
+20$:	BIT	#4, R0
+	BEQ	30$
+	ADD	#2, R4				; down
+	BR	40$
+30$:	BIT	#10, R0
+	BEQ	50$
+	SUB	#2, R4				; up
+40$:	CMP	R4, #MAP_WIDTH
+	BHIS	Lb7ea_bullet_disappear		; out of the map in y (in x there are always obstacles at the ends)
+50$:	MOV	R3, BULLET_STRUCT_X(R5)
+	MOVB	R4, BULLET_STRUCT_Y(R5)
+	CALL	Lb5d6_map_altitude_2x2
+	CLR	R1
+	BISB	BULLET_STRUCT_ALTITUDE(R5), R1
+	CMP	R0, R1
+	BHIS	Lb7ea_bullet_disappear		; the ground is as high as the bullet
+	MOV	R4, R0
+	CALL	Lcca6_compute_map_ptr
+	MOV	R3, BULLET_STRUCT_MAP_PTR(R5)
+	MOV	#BLTOFS, R2			; the 3x3 cells around: an object (bit 6)?
+	MOV	#9., R1
+60$:	MOV	R3, R0
+	ADD	(R2)+, R0
+	CMP	R0, #MAP_SIZE
+	BHIS	70$				; out of the map
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R0)
+	BNE	Lb7a7_potentially_hit_a_robot
+70$:	SOB	R1, 60$
+	BISB	#MAPB_OCCUPIED, Ldd00_map(R3)	; the bullet is on the map again
+	RETURN
+BLTOFS:	.WORD	-<MAP_LENGTH+1>, -MAP_LENGTH, -<MAP_LENGTH-1>, -1, 0, 1, MAP_LENGTH-1, MAP_LENGTH, MAP_LENGTH+1
+
+; Lb7a7: R0 = the cell with an object, R5 = the bullet: a living robot there loses (60 - (its height + altitude)) / 4
+; * (1 + the type of the bullet) of the strength (cannon x2, missiles x3, phasers x4); <= 0: -4 (it blinks, then Lb0fa
+; destroys it). The bullet disappears
+Lb7a7_potentially_hit_a_robot:
+	MOV	R5, -(SP)
+	MOV	R0, R3
+	CALL	Lcdd8_get_robot_at_ptr
+	BNE	80$				; not a robot
+	MOVB	ROBOT_STRUCT_STRENGTH(R5), R0
+	BLE	80$				; already destroyed
+	MOV	#60., R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_HEIGHT(R5), R1
+	SUB	R1, R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_ALTITUDE(R5), R1
+	SUB	R1, R0
+	BIC	#177400, R0
+	ASR	R0
+	ASR	R0				; the base damage
+	MOV	R0, R2
+	MOV	(SP), R1
+	MOVB	BULLET_STRUCT_TYPE(R1), R1
+90$:	ADD	R2, R0
+	SOB	R1, 90$
+	MOVB	ROBOT_STRUCT_STRENGTH(R5), R1
+	SUB	R0, R1
+	BGT	95$
+	MOV	#-4, R1
+95$:	MOVB	R1, ROBOT_STRUCT_STRENGTH(R5)
+80$:	MOV	(SP)+, R5
+; Lb7ea: the bullet disappears
+Lb7ea_bullet_disappear:
+	MOV	#NOSLOT, (R5)
 	RETURN
 
 ; The update cycle of the robot R5, checking if it has to be destroyed
@@ -876,7 +1021,7 @@ Lb116_robot_destroyed:
 10$:	CALL	Lrb_flip_radar		; the robot is off the radar
 	MOV	#NOSLOT, (R5)		; the slot is free
 	CALL	Lbb40_count_robots
-	BR	Lrb_hud
+	JMP	Lrb_hud
 
 ; The robot R5 acts when its counter of the cycles is 0
 Lb154_robot_ai_update:
@@ -897,8 +1042,37 @@ Lb154_robot_ai_update:
 	BNE	5$
 	JMP	Lb450_direct_control
 5$:
-; TODO: the enemy robots in sight (Lb626) and the fire (Lb1d7 ..)
-; Lb1e9: no enemy robots in sight: the steps are counted, the robot keeps walking in its desired direction while it can
+	MOV	R4, -(SP)
+	CALL	Lb626_check_enemy_robots	; R1 = the directions with an enemy robot in line
+	MOV	(SP)+, R4
+	TST	R1
+	BEQ	Lb1e9_no_enemy_in_sight
+	CLR	R0
+	BISB	ROBOT_STRUCT_DIRECTION(R5), R0
+	MOV	R1, R2
+	COM	R2
+	BIC	R2, R0				; the enemy is in the direction the robot faces?
+	BEQ	Lb1d7_no_enemy_ahead
+; an enemy ahead: the robot goes on (TODO: it fires: Lb6b8, Lb6d6, with the bullets; so far Lb1cd: it does not fire)
+	MOV	R4, R2
+	COM	R2
+	BIC	R2, R0				; and it is possible
+	MOVB	R0, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOVB	#1, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	JMP	Lb20d_move_robot
+; Lb1d7: the enemy is in another direction: the robot turns towards it
+Lb1d7_no_enemy_ahead:
+	MOV	R1, R4				; c = the directions with an enemy
+	MOV	R4, R3				; b
+	CALL	Lb505_count_directions
+	BEQ	10$
+	CALL	Lb33e_pick_direction_at_random	; several: one of them
+10$:	MOVB	R4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOVB	#2, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	JMP	Lb20d_move_robot
+; Lb1e9: no enemy robots in sight
+Lb1e9_no_enemy_in_sight:
+; the steps are counted, the robot keeps walking in its desired direction while it can
 	DECB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
 	BMI	Lb1f5_move_in_a_new_direction
 	CLR	R0
@@ -1129,6 +1303,117 @@ TESTTG:	CALL	Lnew_game
 	ADD	#2, TGTY
 	DEC	TGTN
 	BNE	10$
+	RETURN
+.ENDC
+
+.IF DF TESTRAY
+; The test of the rays (build -s "TESTRAY=1" -s "NOMENU=1"): 3 robots of the player look, 3 of the enemy are in line: the
+; robot 0 at (24, 6) faces right, an enemy at (30, 7) is on the row below: right = 1; the robot 1 at (24, 10) faces left,
+; an enemy at (24, 13) is below in the column (a simple ray, 4 cells): down = 4; the robot 2 at (36, 12) faces down,
+; an enemy at (37, 15) is in the column on the right: down = 4. The results go to the arguments of the robots.
+TESTRY:	CALL	Lnew_game
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#30., R3
+	MOV	#7, R4
+	MOV	#200, R0
+	MOV	#4, R1
+	CALL	TRMK
+	MOV	#<Ldb80_player2_robots+<2*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#24., R3
+	MOV	#13., R4
+	MOV	#200, R0
+	MOV	#4, R1
+	CALL	TRMK
+	MOV	#<Ldb80_player2_robots+<3*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#37., R3
+	MOV	#15., R4
+	MOV	#200, R0
+	MOV	#4, R1
+	CALL	TRMK
+	MOV	#Lda00_player1_robots, R5
+	MOV	#24., R3
+	MOV	#6, R4
+	CLR	R0
+	MOV	#1, R1
+	CALL	TRMK
+	MOV	#<Lda00_player1_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#24., R3
+	MOV	#10., R4
+	CLR	R0
+	MOV	#2, R1
+	CALL	TRMK
+	MOV	#<Lda00_player1_robots+<2*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#36., R3
+	MOV	#12., R4
+	CLR	R0
+	MOV	#4, R1
+	CALL	TRMK
+	MOV	#3, R2
+	MOV	#Lda00_player1_robots, R5
+10$:	MOV	R2, -(SP)
+	MOV	R5, -(SP)
+	CALL	Lb626_check_enemy_robots
+	MOV	(SP)+, R5
+	MOVB	R1, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	MOV	(SP)+, R2
+	ADD	#ROBOT_STRUCT_SIZE, R5
+	SOB	R2, 10$
+	RETURN
+; a robot: R5, R3 = x, R4 = y, R0 = the control, R1 = the direction
+TRMK:	MOV	R5, -(SP)
+	MOVB	R1, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	R0, ROBOT_STRUCT_CONTROL(R5)
+	CALL	Lcc7c_set_robot_position
+	MOV	(SP)+, R5
+	RETURN
+.ENDC
+
+.IF DF TESTFIRE
+; The test of the shot (build -s "TESTFIRE=1" -s "NOMENU=1"; add "TESTFIREM=1" for the missiles, "TESTFIREP=1" for the
+; phasers, "TESTFIRER=1" for an enemy out of the range): a robot of the player at (45, 8) faces right and fires, an
+; enemy robot (height 12, altitude 0, strength 100) stands at (51, 8). The bullet goes 2 cells per cycle and hits on the
+; second update: the cannon takes 24, the missiles 36, the phasers 48 (60 - 12) / 4 = 12 * (1 + the type). Both robots
+; stand (their counters are large). The enemy is out of the range at x = 57: nothing is hit, the bullet is free.
+FIREW = 1
+.IF DF TESTFIREM
+FIREW = 2
+.ENDC
+.IF DF TESTFIREP
+FIREW = 3
+.ENDC
+TESTFI:	CALL	Lnew_game
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#51., R3
+.IF DF TESTFIRER
+	MOV	#57., R3
+.ENDC
+	MOV	#8., R4
+	MOV	#200, R0
+	MOV	#4, R1
+	CALL	TFMK
+	MOV	#Lda00_player1_robots, R5
+	MOV	#45., R3
+	MOV	#8., R4
+	CLR	R0
+	MOV	#1, R1
+	CALL	TFMK
+	MOV	#Lda00_player1_robots, R4
+	CALL	Lb6b8_find_new_bullet_ptr
+	MOV	#FIREW, R0
+	JMP	Lb6d6_weapon_fire
+; a robot: R5, R3 = x, R4 = y, R0 = the control, R1 = the direction
+TFMK:	MOV	R5, -(SP)
+	MOVB	R1, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#12., ROBOT_STRUCT_HEIGHT(R5)
+	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
+	MOVB	#377, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	R0, ROBOT_STRUCT_CONTROL(R5)
+	CALL	Lcc7c_set_robot_position
+	MOV	(SP)+, R5
 	RETURN
 .ENDC
 
@@ -1698,6 +1983,98 @@ Ladb7_capture_buildings:
 	CALL	Lbb09_update_base_factory_counts
 	JMP	Lrb_hud				; the numbers of the panel
 95$:	RETURN
+
+; ----- The enemy robots in line (Lb626, Lb66e): from the robot R5 a ray goes in each of the 4 directions (up, down, left,
+; right, the bits 8, 4, 2, 1) over the cells of the map up to the first object (bit 6); if it is a living robot of the
+; other side the direction is marked. In the direction the robot faces 3 parallel rays (the robot is 2 cells wide) go
+; up to 10 cells (12 with the electronics), in the other directions 1 ray up to 8 cells.
+TRDIST:	.WORD	0			; the length of the rays of the direction
+TRBASE:	.WORD	0			; the map offset of the robot
+Lb6b0_direction_offsets:
+	.WORD	1, -1, MAP_LENGTH, -MAP_LENGTH	; right, left, down, up
+
+; Lb66e: R3 = the start (the map offset), R0 = the maximal distance, R2 = the direction (one bit), R5 = the robot that
+; looks, R1 = the directions found: the bit 0 is set if a living robot of the other side is in line. Preserves R2, R3, R5
+Lb66e_check_enemy_in_line:
+	MOV	R3, -(SP)
+	MOV	R4, -(SP)
+	MOV	#Lb6b0_direction_offsets, R4
+	MOV	R2, -(SP)
+10$:	ASR	(SP)
+	BCS	20$
+	ADD	#2, R4
+	BR	10$
+20$:	TST	(SP)+
+	MOV	(R4), R4			; the step of the ray
+30$:	ADD	R4, R3
+	BLT	90$				; out of the map
+	CMP	R3, #MAP_SIZE
+	BHIS	90$
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BNE	40$				; an object
+	SOB	R0, 30$
+90$:	MOV	(SP)+, R4
+	MOV	(SP)+, R3
+	RETURN
+40$:	MOV	R1, -(SP)
+	MOV	R5, -(SP)
+	CALL	Lcdd8_get_robot_at_ptr
+	BNE	80$				; not a robot
+	MOVB	ROBOT_STRUCT_CONTROL(R5), R0
+	MOV	(SP), R4
+	MOVB	ROBOT_STRUCT_CONTROL(R4), R4
+	XOR	R4, R0
+	BPL	80$				; the same side
+	MOVB	ROBOT_STRUCT_STRENGTH(R5), R0
+	DEC	R0
+	BLT	80$				; already destroyed
+	MOV	(SP)+, R5
+	MOV	(SP)+, R1
+	BIS	#1, R1				; found
+	BR	90$
+80$:	MOV	(SP)+, R5
+	MOV	(SP)+, R1
+	BR	90$
+
+; Lb626: the directions with an enemy robot in line for the robot R5 => R1 (up 10, down 4, left 2, right 1).
+; Clobbers R0, R2, R3, R4
+Lb626_check_enemy_robots:
+	MOV	ROBOT_STRUCT_MAP_PTR(R5), TRBASE
+	CLR	R1
+	MOV	#10, R2				; the first direction: up
+10$:	ASL	R1
+	MOV	TRBASE, R3
+	MOV	#8., TRDIST
+	CLR	R0
+	BISB	ROBOT_STRUCT_DIRECTION(R5), R0
+	CMP	R0, R2
+	BNE	50$				; not the direction the robot faces: a simple ray
+	MOV	#10., TRDIST
+	BITB	#200, ROBOT_STRUCT_PIECES(R5)
+	BEQ	20$
+	MOV	#12., TRDIST			; the electronics see further
+20$:	BIT	#3, R2
+	BNE	30$
+	DEC	R3				; up/down: the columns x - 1, x, x + 1
+	MOV	TRDIST, R0
+	CALL	Lb66e_check_enemy_in_line
+	INC	R3
+	MOV	TRDIST, R0
+	CALL	Lb66e_check_enemy_in_line
+	INC	R3
+	BR	50$
+30$:	SUB	#MAP_LENGTH, R3			; left/right: the rows y - 1, y, y + 1
+	MOV	TRDIST, R0
+	CALL	Lb66e_check_enemy_in_line
+	ADD	#MAP_LENGTH, R3
+	MOV	TRDIST, R0
+	CALL	Lb66e_check_enemy_in_line
+	ADD	#MAP_LENGTH, R3
+50$:	MOV	TRDIST, R0
+	CALL	Lb66e_check_enemy_in_line
+	ASR	R2				; the next direction
+	BCC	10$
+	RETURN
 
 ;------------------------------------------------------------------------------
 ; The tick of the game inside the menus (the game goes on while the menu of a robot is open): the frame, the radar,
