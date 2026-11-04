@@ -40,10 +40,10 @@ La600_start:
 	CLRB	ROBOT_STRUCT_STRENGTH(R5)	; the robot is destroyed at once
 .ENDC
 	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
-	MOV	#22., R3
-	MOV	#5, R4
-	MOV	#22., Lfd0e_player_x
-	MOVB	#5, Lfd0d_player_y
+	MOV	#24., R3
+	MOV	#8., R4
+	MOV	#24., Lfd0e_player_x
+	MOVB	#8., Lfd0d_player_y
 	MOVB	#18., Lfd10_player_altitude
 	CLRB	Lfd30_player_elevate_timer
 	CALL	Lcc7c_set_robot_position
@@ -75,6 +75,9 @@ La600_start:
 	CALL	Lcc7c_set_robot_position
 	CALL	Lbb40_count_robots
 .ENDC
+.IF DF TESTTGT
+	CALL	TESTTG			; the search of the target (see TESTTG)
+.ENDC
 .IF DF TESTCONS
 	CALL	Lnew_game		; the player above the "H" of his warbase: the construction screen opens at once
 	MOV	#22., Lfd0e_player_x
@@ -105,6 +108,9 @@ LANDING = 1
 LANDING = 1
 .ENDC
 .IF DF TESTMOVE
+LANDING = 1
+.ENDC
+.IF DF TESTTGT
 LANDING = 1
 .ENDC
 .ENDC
@@ -835,6 +841,10 @@ Lb154_robot_ai_update:
 	CALL	Lrb_flip_radar
 	MOV	ROBOT_STRUCT_MAP_PTR(R5), R3
 	CALL	Lb513_movement_possibilities
+	CMPB	ROBOT_STRUCT_CONTROL(R5), #ROBOT_CONTROL_DIRECT_CONTROL
+	BNE	5$
+	JMP	Lb450_direct_control
+5$:
 ; TODO: the enemy robots in sight (Lb626) and the fire (Lb1d7 ..)
 ; Lb1e9: no enemy robots in sight: the steps are counted, the robot keeps walking in its desired direction while it can
 	DECB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
@@ -869,6 +879,193 @@ Lb505_count_directions:
 	BNE	10$
 	CMP	R0, #1
 	RETURN
+
+; ----- The search of the target of the orders (Lb34d..Lb450): the nearest robot of the opponent or the nearest free
+; building of the wanted kind (only the x counts). The side of the robot that searches: Lfd51_robot_player_or_enemy
+; (0: the player, 1: the enemy AI). The result is an index (a robot 0..23 of the table of the opponent, a factory
+; 0..23, a warbase 0..3), 377 = none.
+TGX:	.WORD	0			; the x of the robot that searches
+TGBEST:	.WORD	0			; the distance to the nearest found
+TGNEAR:	.WORD	0			; its index, 377 = none yet
+TGORD:	.WORD	0			; the orders
+
+; Lb411: R3 = the x of the reference robot: the search starts
+Lb411_prepare_nearest_search:
+	MOV	R3, TGX
+	MOV	#8192., TGBEST
+	MOV	#377, TGNEAR
+	RETURN
+
+; Lb3ca: R0 = |R3 - the x of the reference robot|
+Lb3ca_distance:
+	MOV	R3, R0
+	SUB	TGX, R0
+	BGE	10$
+	NEG	R0
+10$:	RETURN
+
+; Lb3b3: R3 = the x of a candidate, R4 = its index: it is the nearest if it is nearer than the nearest so far
+Lb3b3_check_if_nearer:
+	CALL	Lb3ca_distance
+	CMP	R0, TGBEST
+	BHIS	10$
+	MOV	R0, TGBEST
+	MOV	R4, TGNEAR
+10$:	RETURN
+
+; Lb41d: R3 = the x of the robot that searches => R2 = the index of the nearest robot of the opponent (377 = none),
+; Z = none. Clobbers R0, R1, R3, R4
+Lb41d_find_nearest_robot:
+	CALL	Lb411_prepare_nearest_search
+	MOV	R5, -(SP)
+	MOV	#Lda00_player1_robots, R5	; the enemy AI looks for the robots of the player,
+	TSTB	Lfd51_robot_player_or_enemy
+	BNE	10$
+	MOV	#Ldb80_player2_robots, R5	; the player for the robots of the enemy
+10$:	CLR	R4
+	MOV	#MAX_ROBOTS_PER_PLAYER, R1
+20$:	CMP	(R5), #NOSLOT
+	BEQ	30$
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CALL	Lb3b3_check_if_nearer
+30$:	ADD	#ROBOT_STRUCT_SIZE, R5
+	INC	R4
+	SOB	R1, 20$
+	MOV	(SP)+, R5
+	CLR	R2
+	BISB	TGNEAR, R2
+	CMP	R2, #377
+	RETURN
+
+; Lb3d5: R0 = the orders => R5 = the first building to look at, R1 = their number, R2 = the flags of the wanted
+; buildings in the type byte: 040 enemy of the player (bit 5), 0100 of the player (bit 6) as seen by the robot that
+; searches, 0 neutral
+Lb3d5_prepare_building_search:
+	MOV	#Lfd84_factories, R5
+	MOV	#N_FACTORIES, R1
+	CMP	R0, #ORDERS_DESTROY_ENEMY_WARBASES
+	BEQ	10$
+	CMP	R0, #ORDERS_CAPTURE_ENEMY_WARBASES
+	BNE	20$
+10$:	MOV	#Lfd70_warbases, R5
+	MOV	#N_WARBASES, R1
+20$:	MOV	#40, R2
+	TSTB	Lfd51_robot_player_or_enemy
+	BEQ	30$
+	ASL	R2
+30$:	CMP	R0, #ORDERS_CAPTURE_NEUTRAL_FACTORIES
+	BNE	40$
+	CLR	R2
+40$:	RETURN
+
+; Lb36c: the building R5 with the index R4: if no other robot of the same side with the same orders has it as its
+; target, it is checked if it is the nearest. Preserves R1, R2, R4, R5
+Lb36c_check_building:
+	MOV	R1, -(SP)
+	MOV	#Lda00_player1_robots, R3
+	TSTB	Lfd51_robot_player_or_enemy
+	BEQ	10$
+	MOV	#Ldb80_player2_robots, R3
+10$:	MOV	#MAX_ROBOTS_PER_PLAYER, R1
+20$:	CMP	(R3), #NOSLOT
+	BEQ	30$
+	MOVB	ROBOT_STRUCT_ORDERS(R3), R0
+	CMP	R0, TGORD
+	BNE	30$			; other orders
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R3), R0
+	CMP	R0, R4
+	BEQ	40$			; another robot has the building as its target already
+30$:	ADD	#ROBOT_STRUCT_SIZE, R3
+	SOB	R1, 20$
+	MOV	(SP)+, R1
+	MOV	BUILDING_STRUCT_X(R5), R3
+	BR	Lb3b3_check_if_nearer
+40$:	MOV	(SP)+, R1
+	RETURN
+
+; Lb34d: the target of the orders R0 (3..8) for the robot at the x R3 => R2 = the index (377 = none), Z = none.
+; Preserves R5
+Lb34d_find_target:
+	CMP	R0, #ORDERS_DESTROY_ENEMY_ROBOTS
+	BEQ	Lb41d_find_nearest_robot
+	MOV	R0, TGORD
+	MOV	R5, -(SP)
+	CALL	Lb411_prepare_nearest_search
+	CALL	Lb3d5_prepare_building_search
+	CLR	R4
+10$:	MOVB	BUILDING_STRUCT_TYPE(R5), R0
+	BIC	#^C340, R0			; the flags: bit 7 destroyed, 6 player, 5 enemy
+	CMP	R0, R2
+	BNE	20$				; not of the wanted kind
+	CALL	Lb36c_check_building
+20$:	ADD	#BUILDING_STRUCT_SIZE, R5
+	INC	R4
+	SOB	R1, 10$
+	MOV	(SP)+, R5
+	CLR	R2
+	BISB	TGNEAR, R2
+	CMP	R2, #377
+	RETURN
+
+.IF DF TESTTGT
+; The test of the search of the target (build -s "TESTTGT=1" -s "NOMENU=1"): a new game, 2 robots of the enemy (the
+; table index 2 at x = 100 and 5 at x = 40), 4 robots of the player at x = 24 with the orders 3 (destroy robots),
+; 6 (capture neutral factories), 8 (capture enemy warbases), 4 (destroy enemy factories), 6 again (another factory):
+; the robots get the targets
+TGTORD:	.BYTE	3, 6, 8., 4, 6, 0
+TGTN:	.WORD	0
+TGTP:	.WORD	0
+TGTR:	.WORD	0
+TGTY:	.WORD	0
+; R5 = the robot, R3 = x, R4 = y, R0 = the control: the robot stands there (pieces bipod + cannon)
+TGMK:	MOV	R5, -(SP)
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	R0, ROBOT_STRUCT_CONTROL(R5)
+	CALL	Lcc7c_set_robot_position
+	MOV	(SP)+, R5
+	RETURN
+TESTTG:	CALL	Lnew_game
+	MOV	#100., R3
+	MOV	#8., R4
+	MOV	#<Ldb80_player2_robots+<2*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#200, R0
+	CALL	TGMK
+	MOV	#40., R3
+	MOV	#12., R4
+	MOV	#<Ldb80_player2_robots+<5*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#200, R0
+	CALL	TGMK
+	MOV	#5, TGTN
+	MOV	#TGTORD, TGTP
+	MOV	#Lda00_player1_robots, TGTR
+	MOV	#6, TGTY
+10$:	MOV	TGTR, R5
+	MOV	#24., R3
+	MOV	TGTY, R4
+	CLR	R0
+	CALL	TGMK
+	MOV	TGTP, R1
+	MOVB	(R1)+, R0
+	MOV	R1, TGTP
+	MOVB	R0, ROBOT_STRUCT_ORDERS(R5)
+	CLRB	Lfd51_robot_player_or_enemy
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	MOV	R5, -(SP)
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	CALL	Lb34d_find_target
+	MOV	(SP)+, R5
+	MOVB	R2, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	ADD	#ROBOT_STRUCT_SIZE, TGTR
+	ADD	#2, TGTY
+	DEC	TGTN
+	BNE	10$
+	RETURN
+.ENDC
 
 ; Lb222: the direction for the orders of the robot R5; R4 = the possible directions => R4 = the chosen one
 Lb222_choose_direction_to_move:
@@ -1091,6 +1288,32 @@ Lb61d_robot_movement_speed_table:
 	.BYTE	9., 7, 4
 	.EVEN
 
+; Lb450: the robot R5 controlled by the player (R4 = the possible directions): the keys give the direction; if the robot
+; is already facing it, only the possible ones count (a turn needs no free way); with several keys the robot keeps
+; its desired direction while it is possible. The keys are filtered and left for the ship of the player (Laf11)
+Lb450_direct_control:
+	MOV	R4, R3				; b = the possible directions
+	CALL	Ld37c_read_keyboard_input	; R0 = the keys
+	CLR	R1
+	BISB	ROBOT_STRUCT_DIRECTION(R5), R1
+	CMP	R0, R1
+	BNE	10$				; another direction: it turns, the collisions do not matter
+	MOV	R4, R1
+	COM	R1
+	BIC	R1, R0				; the possible keys
+10$:	MOV	R0, R4				; c = the directions we want
+	CALL	Lb505_count_directions
+	BEQ	20$				; only one
+	CLR	R0
+	BISB	ROBOT_STRUCT_DESIRED_DIRECTION(R5), R0
+	MOV	R3, R1
+	COM	R1
+	BIC	R1, R0				; keep going if it is possible, else stop
+	MOV	R0, R4
+20$:	MOVB	R4, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOV	R4, Lfd0c_keyboard_state	; the ship of the player follows the robot
+	BR	Lb20d_move_robot
+
 ; Lb4de: the robot moved against the direction of its orders: the distance grows (not for the direct control)
 Lb4de_advance_against_orders:
 	CMPB	ROBOT_STRUCT_CONTROL(R5), #ROBOT_CONTROL_DIRECT_CONTROL
@@ -1170,7 +1393,22 @@ Lb495_step:
 	CALL	Lb4b9_robot_advance
 	CALL	Lb5d6_map_altitude_2x2
 	MOVB	R0, ROBOT_STRUCT_ALTITUDE(R5)
-	RETURN				; TODO: the direct control (the player follows the robot)
+	CMPB	ROBOT_STRUCT_CONTROL(R5), #ROBOT_CONTROL_DIRECT_CONTROL
+	BNE	90$
+	MOV	R3, -(SP)			; the direct control: the player ship moves like the robot
+	MOV	R4, -(SP)
+	MOV	R5, -(SP)
+	CALL	Laf11_player_ship_control
+	MOV	(SP)+, R5
+	MOV	(SP)+, R4
+	MOV	(SP)+, R3
+	CLR	R0
+	BISB	ROBOT_STRUCT_HEIGHT(R5), R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_ALTITUDE(R5), R1
+	ADD	R1, R0
+	MOVB	R0, Lfd10_player_altitude	; the player is on top of the robot
+90$:	RETURN
 
 ; Lb20d: the robot R5 moves (turns) in its desired direction, its speed, its place on the map and on the radar
 Lb20d_move_robot:
@@ -1367,13 +1605,45 @@ Lrm_menu:
 ; The combat mode: the menu of the combat (so far every item goes back to the menu of the robot).
 ; Returns R0 = -1 if the robot is destroyed
 Lcombat_mode:
-	CALL	Lrm_box
+	MOV	#<CMNIT-1>, RMCUR	; STOP COMBAT
+10$:	CALL	Lrm_box
 	CALL	Lrm_draw_strength
 	MOV	#CMITAB, RMTAB
 	MOV	#CMLIST, RMLST
 	MOV	#CMNIT, RMCNT
-	MOV	#<CMNIT-1>, RMCUR	; STOP COMBAT
-	BR	Lrm_menu
+	CALL	Lrm_menu
+	TST	R0
+	BMI	90$			; the robot is destroyed
+	CMP	R0, #4
+	BNE	80$
+	CALL	Ldirect_control		; MOVE ROBOT: back to the menu of the combat afterwards
+	TST	R0
+	BPL	10$
+	RETURN
+80$:	CLR	R0
+90$:	RETURN
+
+; DIRECT CONTROL (La941): the player drives the robot with the arrows until FIRE (the game goes on). Returns
+; R0 = -1 if the robot is destroyed, else 0
+Ldirect_control:
+	MOV	RMROB, R5
+	MOVB	#ROBOT_CONTROL_DIRECT_CONTROL, ROBOT_STRUCT_CONTROL(R5)
+	CLRB	ROBOT_STRUCT_DESIRED_DIRECTION(R5)	; the automatic walking stops
+10$:	MOV	@#PPUKEY, R0		; wait until no key is pressed (the FIRE that chose the item)
+	BIC	#^C37, R0
+	BNE	10$
+20$:	CALL	Lgame_tick
+	CALL	Lrm_draw_strength
+	MOV	RMROB, R5
+	CMP	(R5), #NOSLOT
+	BEQ	90$			; the robot is destroyed
+	BIT	#PKEYFR, @#PPUKEY
+	BEQ	20$			; FIRE leaves the direct control
+	MOVB	#ROBOT_CONTROL_PLAYER_LANDED, ROBOT_STRUCT_CONTROL(R5)
+	CLR	R0
+	RETURN
+90$:	MOV	#-1, R0
+	RETURN
 
 ; ----- GIVE ORDERS (La971): the menus of the orders; the texts are in NEMSGS.MAC, [ROBOT ORDERS]
 RMMIL:	.WORD	0			; the distance in miles
@@ -1489,8 +1759,8 @@ Lorders_miles:
 	RETURN
 
 ; SEARCH & DESTROY (R0 = 0) / SEARCH & CAPTURE (R0 = 1): the target. Destroying the factories and the warbases needs
-; the nuclear weapon, else the order is cancelled. TODO: Lb34d_find_capture_or_destroy_target: the argument of the
-; orders, the target found (now no target: 377). Returns R0 = -1 if the robot is destroyed
+; the nuclear weapon, else the order is cancelled. TODO: Lb34d_find_target: the argument of the
+; orders, the target is searched by Lb34d. Returns R0 = -1 if the robot is destroyed
 Lorders_target:
 	MOV	R0, -(SP)
 	CALL	Lrm_box
@@ -1520,7 +1790,18 @@ Lorders_target:
 	BNE	30$
 	CLRB	ROBOT_STRUCT_ORDERS(R5)	; cancelled: STOP AND DEFEND
 	BR	40$
-30$:	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+30$:	CLRB	Lfd51_robot_player_or_enemy	; the robot of the player
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)	; no target yet
+	MOV	R5, -(SP)
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	CALL	Lb34d_find_target
+	MOV	(SP)+, R5
+	MOVB	R2, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)	; the target
+	CMP	R2, #377
+	BNE	40$
+	CLRB	ROBOT_STRUCT_ORDERS(R5)	; no target: STOP AND DEFEND
 40$:	TST	(SP)+
 	CLR	R0
 	RETURN
@@ -1545,7 +1826,12 @@ La732_land_on_robot_internal:
 	TST	R0
 	BMI	90$			; the robot is destroyed
 	MOV	R0, RMLAST
-	CMP	R0, #1
+	BNE	55$
+	CALL	Ldirect_control		; DIRECT CONTROL
+	TST	R0
+	BPL	La732_land_on_robot_internal
+	BR	90$
+55$:	CMP	R0, #1
 	BNE	60$
 	CALL	Lgive_orders		; GIVE ORDERS
 	TST	R0
