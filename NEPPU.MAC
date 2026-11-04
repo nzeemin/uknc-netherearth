@@ -713,6 +713,7 @@ PALDEF:	.WORD	^B1011101010011000, ^B1111111011011100	; the default palette of th
 BKP054:	.WORD	0			; Saved 177054
 BKP:					; 0-1000 addrs backup: the PPU memory only (it is allocated but not in the CPU image)
 PPEND = BKP+1000		; the end of the allocated PPU memory; the CPU image of the block ends at BKP
+PPSIZE = BKP-PPSTA		; the size of the code and the data sent to the PPU in bytes (the batch files print it from the listing)
 ; End of PPU code block
 ;==============================================================================
 

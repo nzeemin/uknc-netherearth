@@ -60,58 +60,23 @@ HUDDYN:	MOV	#HUDBUF, R4		; the buffer pointer
 HBTIME:	MOV	#<SCREEN+HUD_COL+7.>, (R4)+
 	MOV	#7, (R4)+
 	CLR	(R4)+
-	MOV	Lfd37_days, R0
-	MOV	#HDTAB, R2
-	CLR	R5			; no digits printed yet
-10$:	CLR	R1
-20$:	CMP	R0, (R2)
-	BLO	30$
-	SUB	(R2), R0
-	INC	R1
-	BR	20$
-30$:	TST	R1
-	BNE	40$
-	TST	R5
-	BNE	40$
-	MOVB	#' , (R4)+		; leading zero: a space
-	BR	50$
-40$:	MOV	#1, R5
-	ADD	#'0, R1
-	MOVB	R1, (R4)+
-50$:	TST	(R2)+
-	CMP	R2, #HDTABE
-	BNE	10$
-	ADD	#'0, R0			; the unit digit
-	MOVB	R0, (R4)+
-	CLRB	(R4)+			; the terminator
+	MOV	Lfd37_days, R1
+	MOV	#5, R2
+	MOV	#' , R3
+	CALL	Lfmt_dec_z		; the day, the terminator
 	MOV	#<SCREEN+<TILEH*LINEW>+HUD_COL+7.>, (R4)+
 	MOV	#7, (R4)+
 	CLR	(R4)+
-	CLR	R0
-	BISB	Lfd36_hours, R0
-	CALL	HBDIG2
+	CLR	R1
+	BISB	Lfd36_hours, R1
+	MOV	#'0, R3
+	CALL	Lfmt_dec_2
 	MOVB	#'., (R4)+
-	CLR	R0
-	BISB	Lfd35_minutes, R0
-	CALL	HBDIG2
+	CLR	R1
+	BISB	Lfd35_minutes, R1
+	CALL	Lfmt_dec_2		; R3 is still the "0"
 	CLRB	(R4)+			; the terminator
 	RETURN
-
-; Two digits of R0 (0..99) with the leading zero to the buffer at R4 (as bytes)
-HBDIG2:	CLR	R1
-10$:	CMP	R0, #10.
-	BLO	20$
-	SUB	#10., R0
-	INC	R1
-	BR	10$
-20$:	ADD	#'0, R1
-	MOVB	R1, (R4)+
-	ADD	#'0, R0
-	MOVB	R0, (R4)+
-	RETURN
-
-HDTAB:	.WORD	10000., 1000., 100., 10.
-HDTABE:
 
 ; Strings of the counts of one player: R5 = counts (7 bytes + the number of robots), HSCR = screen
 ; address of the first digit, HSCR2 = screen address of the number of robots.
@@ -136,31 +101,14 @@ HBCNTS:	MOV	#1, HDIGS
 
 ; Appends a string block with a number to the buffer at R4: R0 = value (0..99), R1 = screen address,
 ; R2 = ink, R3 = paper index; HDIGS = number of digits (1 or 2), HFILL = the character for the
-; leading zero of two digits. Clobbers R0-R3, advances R4.
+; leading zero of two digits. Clobbers R0-R3, advances R4 (the block is padded to the even address).
 HBNUM:	MOV	R1, (R4)+
 	MOV	R2, (R4)+
 	MOV	R3, (R4)+
-	CLR	R1			; tens
-10$:	CMP	R0, #10.
-	BLO	20$
-	SUB	#10., R0
-	INC	R1
-	BR	10$
-20$:	ADD	#'0, R0			; the unit digit
-	CMP	HDIGS, #2
-	BLO	40$			; one digit: the terminator is in the high byte
-	SWAB	R0
-	TST	R1
-	BNE	30$
-	MOV	HFILL, R1		; no tens: the filler
-	BR	35$
-30$:	ADD	#'0, R1
-35$:	BIS	R1, R0			; the tens digit in the low byte, the unit digit in the high byte
-	MOV	R0, (R4)+
-	CLR	(R4)+			; the terminator
-	RETURN
-40$:	MOV	R0, (R4)+
-	RETURN
+	MOV	R0, R1
+	MOV	HDIGS, R2
+	MOV	HFILL, R3
+	JMP	Lfmt_dec_z
 
 HDIGS:	.WORD	0
 HFILL:	.WORD	0

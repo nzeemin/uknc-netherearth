@@ -2904,9 +2904,11 @@ Lrm_draw_orders:
 	BHIS	20$
 	CLR	R0
 	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5), R0
-	ASR	R0
+	MOV	R0, R1
+	ASR	R1
 	MOV	#<RMOMB+6>, R4
-	CALL	Lrm_fmt2
+	MOV	#' , R3
+	CALL	Lfmt_dec_2
 	CLRB	(R4)
 	PPUSTR	RMOMB
 20$:	RETURN
@@ -2914,34 +2916,15 @@ Lrm_draw_orders:
 ; Draws the strength of the robot (0..100 and more) and "%"
 Lrm_draw_strength:
 	MOV	RMROB, R5
-	CLR	R0
-	BISB	ROBOT_STRUCT_STRENGTH(R5), R0
+	CLR	R1
+	BISB	ROBOT_STRUCT_STRENGTH(R5), R1
 	TSTB	ROBOT_STRUCT_STRENGTH(R5)
 	BPL	5$
-	CLR	R0			; negative: 0
+	CLR	R1			; negative: 0
 5$:	MOV	#<RMSTRB+6>, R4
-	MOV	#CSDTAB, R2
-	CLR	R5			; no digits yet
-10$:	CLR	R1
-20$:	CMP	R0, (R2)
-	BLO	30$
-	SUB	(R2), R0
-	INC	R1
-	BR	20$
-30$:	TST	R1
-	BNE	40$
-	TST	R5
-	BNE	40$
-	MOVB	#' , (R4)+
-	BR	50$
-40$:	MOV	#1, R5
-	ADD	#'0, R1
-	MOVB	R1, (R4)+
-50$:	TST	(R2)+
-	CMP	R2, #CSDTBE
-	BNE	10$
-	ADD	#'0, R0
-	MOVB	R0, (R4)+
+	MOV	#3, R2
+	MOV	#' , R3
+	CALL	Lfmt_dec
 	MOVB	#'%, (R4)+
 	CLRB	(R4)
 	PPUSTS	RMSTL			; the label and the number
@@ -3088,29 +3071,12 @@ Lrm_send:
 	PPUCMW	#CMDSTS
 	RETURN
 
-; R0 = a number 0..99, R4 = the buffer: 2 characters (a space instead of the leading zero)
-Lrm_fmt2:
-	CLR	R1
-10$:	CMP	R0, #10.
-	BLO	20$
-	SUB	#10., R0
-	INC	R1
-	BR	10$
-20$:	TST	R1
-	BNE	30$
-	MOVB	#' , (R4)+
-	BR	40$
-30$:	ADD	#'0, R1
-	MOVB	R1, (R4)+
-40$:	ADD	#'0, R0
-	MOVB	R0, (R4)+
-	RETURN
-
 ; Draws the chosen distance
 Lrm_draw_miles:
-	MOV	RMMIL, R0
+	MOV	RMMIL, R1
 	MOV	#<RMMB+6>, R4
-	CALL	Lrm_fmt2
+	MOV	#' , R3
+	CALL	Lfmt_dec_2
 	CLRB	(R4)
 	PPUSTR	RMMB
 	RETURN
@@ -3293,8 +3259,6 @@ Lrm_leave_robot:
 
 
 CSTOT:	.WORD	0			; the sum of the resources
-CSDTAB:	.WORD	100., 10.
-CSDTBE:
 
 ; Lcbe0_draw_resource_counts_in_construction_screen: the numbers of the resources (columns 14..15, white)
 ; and their sum (columns 13..15). From the working copy of the resources (Lfd29).
@@ -3323,30 +3287,10 @@ Lcbe0_draw_resource_counts:
 	MOV	#<SCREEN+<18.*TILEH*LINEW>+13.>, (R4)+
 	MOV	#7, (R4)+
 	CLR	(R4)+
-	MOV	CSTOT, R0
-	MOV	#CSDTAB, R2
-	CLR	R5			; no digits printed yet
-30$:	CLR	R1
-40$:	CMP	R0, (R2)
-	BLO	50$
-	SUB	(R2), R0
-	INC	R1
-	BR	40$
-50$:	TST	R1
-	BNE	60$
-	TST	R5
-	BNE	60$
-	MOVB	#' , (R4)+
-	BR	70$
-60$:	MOV	#1, R5
-	ADD	#'0, R1
-	MOVB	R1, (R4)+
-70$:	TST	(R2)+
-	CMP	R2, #CSDTBE
-	BNE	30$
-	ADD	#'0, R0			; the unit digit
-	MOVB	R0, (R4)+
-	CLRB	(R4)+			; the terminator
+	MOV	CSTOT, R1
+	MOV	#3, R2
+	MOV	#' , R3
+	CALL	Lfmt_dec_z
 	CLR	(R4)+			; the end of the list
 	PPUSTS	HUDBUF
 	RETURN
@@ -3906,6 +3850,47 @@ Ld37c_read_keyboard_input:
 	MOV	@#PPUKEY, R0
 	BIC	#^C37, R0
 	MOV	R0, Lfd0c_keyboard_state
+	RETURN
+
+;------------------------------------------------------------------------------
+; Numbers to decimal characters (used by the panel, the menus, the construction screen)
+
+; Lfmt_dec with 2 digits
+Lfmt_dec_2:
+	MOV	#2, R2
+
+; Lfmt_dec: the decimal digits of R1 (0..32767) as the characters at R4: R2 = the number of the digits, the leading zeros
+; are replaced with the character R3 (the last digit is always written). R4 is advanced to the end of the digits.
+; Clobbers R0, R1, R2; preserves R3, R5
+Lfmt_dec:
+	ADD	R2, R4
+	MOV	R4, -(SP)		; the end of the digits
+	CLR	R0
+	DIV	#10., R0		; R0 = the quotient, R1 = the remainder
+	ADD	#'0, R1
+	MOVB	R1, -(R4)		; the last digit
+	MOV	R0, R1
+	DEC	R2
+	BEQ	90$
+10$:	TST	R1
+	BNE	20$
+	MOVB	R3, -(R4)		; a leading zero
+	BR	30$
+20$:	CLR	R0
+	DIV	#10., R0
+	ADD	#'0, R1
+	MOVB	R1, -(R4)
+	MOV	R0, R1
+30$:	SOB	R2, 10$
+90$:	MOV	(SP)+, R4
+	RETURN
+
+; The same and the terminator (the zero byte) and the padding to the even address (a string block of the list for the PPU)
+Lfmt_dec_z:
+	CALL	Lfmt_dec
+	CLRB	(R4)+
+	INC	R4
+	BIC	#1, R4
 	RETURN
 
 ;------------------------------------------------------------------------------

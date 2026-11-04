@@ -26,6 +26,9 @@ if errorlevel 1 goto :Failed
 findstr /RC:"^[ABDEILMNOPQRTUZ\*] " NEARTH.lst
 if %errorlevel%==0 goto :Failed
 echo NEARTH COMPILED SUCCESSFULLY
+for /f "tokens=2" %%a in ('findstr /C:"PPSIZE =" NEARTH.lst') do set /a PPS=0%%a
+set /a PPF=3200-PPS
+echo PPU block (code and data): %PPS% bytes, free before it costs CPU memory: %PPF% bytes
 
 tools\pclink11.exe /VERBOSITY:1 NEARTH.obj /MAP /EXECUTE:NEARTH.SAV
 if errorlevel 1 (
