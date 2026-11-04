@@ -3763,14 +3763,13 @@ MNSCL:	.BYTE	'2			; the height scale character of the selected item
 .INCLUDE /NEMSGS.MAC/			; the texts of the main menu
 .ENDC
 
-; The items of a menu: left aligned. The selected one has the character ">" before it, is yellow and
-; double height, the others are white and normal height. Lmenu_select changes the ink word, the scale
-; character and the first character of the text of the item blocks (the offsets MNB_INK, MNB_SCALE,
-; MNB_CHAR in the block). The blocks before the items erase the old ones (a double height item takes two
-; rows of the screen).
+; The items of a menu: left aligned. The selected one is yellow and double height, the others are white and normal
+; height; the mark "> " is a block of its own (the last in the table of the items, in the list after the items): it
+; is moved to the two columns left of the selected item. Lmenu_select changes the ink word and the scale character
+; of the item blocks (the offsets MNB_INK, MNB_SCALE in the block). The blocks before the items erase the old
+; ones (a double height item takes two rows of the screen).
 MNB_INK = 2
 MNB_SCALE = 7
-MNB_CHAR = 8.
 
 
 
@@ -3789,17 +3788,24 @@ Lmenu_select:
 	CLR	@#PPUKEL		; the presses before the entry do not count
 Lc106_menu_redraw_options:
 	MOV	MNTAB1, R3
+	MOV	MNCNT, R2
+	ASL	R2
+	ADD	R3, R2
+	MOV	(R2), R2		; the block of the mark: after the items in the table
 	CLR	R4
 10$:	MOV	(R3)+, R5
 	CMP	R4, MNSEL
 	BEQ	20$
 	MOV	#7, MNB_INK(R5)		; an item: white, normal height
 	MOVB	#'1, MNB_SCALE(R5)
-	MOVB	#' , MNB_CHAR(R5)
 	BR	30$
-20$:	MOV	#6, MNB_INK(R5)		; the selected item: yellow, double height, with ">"
+20$:	MOV	#6, MNB_INK(R5)		; the selected item: yellow, double height, the mark is at the two columns left of it
 	MOVB	MNSCL, MNB_SCALE(R5)
-	MOVB	#'>, MNB_CHAR(R5)
+	MOV	(R5), R0
+	SUB	#2, R0
+	MOV	R0, (R2)
+	MOV	#6, MNB_INK(R2)
+	MOVB	MNSCL, MNB_SCALE(R2)
 30$:	INC	R4
 	CMP	R4, MNCNT
 	BLO	10$

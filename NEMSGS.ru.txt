@@ -8,10 +8,10 @@
 [MAIN MENU]
 "NETHER" /
 "EARTH" /
-"> START GAME"		= "> НАЧАТЬ ИГРУ"
-"  PALETTE"		= "  ПАЛИТРА"
-"  LOAD SAVED GAME"	= "  ЗАГРУЗИТЬ ИГРУ"
-"  EXIT"		= "  ВЫХОД"
+"START GAME"	= "НАЧАТЬ ИГРУ"
+"PALETTE"	= "ПАЛИТРА"
+"LOAD SAVED GAME" = "ЗАГРУЗИТЬ ИГРУ"
+"EXIT"		= "ВЫХОД"
 "ZX SPECTRUM 1987 ICON DESIGN LTD" /
 "UKNC 2026 NZEEMIN  " /
 
@@ -46,9 +46,9 @@
 
 [PAUSE MENU]
 "GAME PAUSED"	= "   ПАУЗА"
-"> CONTINUE"	= "> ПРОДОЛЖИТЬ"
-"  SAVE GAME"	= "  СОХРАНИТЬ ИГРУ"
-"  ABORT GAME"	= "  ПРЕРВАТЬ ИГРУ"
+"CONTINUE"	= "ПРОДОЛЖИТЬ"
+"SAVE GAME"	= "СОХРАНИТЬ ИГРУ"
+"ABORT GAME"	= "ПРЕРВАТЬ ИГРУ"
 
 [ROBOT CONSTRUCTION]
 "ROBOT"		= "СБОРКА"

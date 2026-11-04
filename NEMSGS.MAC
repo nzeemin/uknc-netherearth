@@ -2,7 +2,7 @@
 ; The texts of the screens: the game screen, the main menu, the pause menu, the robot construction
 ; (included by NECORE.MAC). The Russian version is NEMSGSRU.MAC, made by
 ; tools/conv_lang.py from this file and NEMSGS.ru.txt (see the conditional .INCLUDE in NECORE.MAC).
-; The item blocks are changed by Lmenu_select: the text starts with "> " or "  " (MNB_CHAR).
+; The item blocks are changed by Lmenu_select (the ink and the scale); the mark "> " is a block of its own, moved to the selected item.
 
 ; The macros of the strings (the PPU command CMDSTR block: the screen address, the ink, the paper index, the text)
 ; A string of a screen: row, column, ink, paper, text. MSTRB: the same, the text as the codes (tools/conv_lang.py)
@@ -109,24 +109,29 @@ MNOPTS:
 	.BYTE	4, '2
 	.ASCIZ	/                 /
 	.EVEN
-MNOPT1:	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 6, 0
+MNOPT1:	.WORD	SCREEN+<16.*TILEH*LINEW>+14., 6, 0
 	.BYTE	4, '2
-	.ASCIZ	/> START GAME/
+	.ASCIZ	/START GAME/
 	.EVEN
-MNOPT2:	.WORD	SCREEN+<19.*TILEH*LINEW>+12., 7, 0
+MNOPT2:	.WORD	SCREEN+<19.*TILEH*LINEW>+14., 7, 0
 	.BYTE	4, '1
-	.ASCIZ	/  PALETTE/
+	.ASCIZ	/PALETTE/
 	.EVEN
-MNOPT3:	.WORD	SCREEN+<22.*TILEH*LINEW>+12., 7, 0
+MNOPT3:	.WORD	SCREEN+<22.*TILEH*LINEW>+14., 7, 0
 	.BYTE	4, '1
-	.ASCIZ	/  LOAD SAVED GAME/
+	.ASCIZ	/LOAD SAVED GAME/
 	.EVEN
-MNOPT4:	.WORD	SCREEN+<25.*TILEH*LINEW>+12., 7, 0
+MNOPT4:	.WORD	SCREEN+<25.*TILEH*LINEW>+14., 7, 0
 	.BYTE	4, '1
-	.ASCIZ	/  EXIT/
+	.ASCIZ	/EXIT/
+	.EVEN
+; the mark of the selected item (Lmenu_select moves it)
+MNMARK:	.WORD	SCREEN+<16.*TILEH*LINEW>+12., 6, 0
+	.BYTE	4, '2
+	.ASCIZ	/> /
 	.EVEN
 	.WORD	0
-MNTAB:	.WORD	MNOPT1, MNOPT2, MNOPT3, MNOPT4
+MNTAB:	.WORD	MNOPT1, MNOPT2, MNOPT3, MNOPT4, MNMARK
 
 ; The pause menu
 ;@ PAUSE MENU
@@ -150,20 +155,25 @@ PMOPTS:
 	.BYTE	4, '2
 	.ASCIZ	/                 /
 	.EVEN
-PMOPT1:	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 6, 0
+PMOPT1:	.WORD	SCREEN+<14.*TILEH*LINEW>+14., 6, 0
 	.BYTE	4, '2
-	.ASCIZ	/> CONTINUE/
+	.ASCIZ	/CONTINUE/
 	.EVEN
-PMOPT2:	.WORD	SCREEN+<17.*TILEH*LINEW>+12., 7, 0
+PMOPT2:	.WORD	SCREEN+<17.*TILEH*LINEW>+14., 7, 0
 	.BYTE	4, '1
-	.ASCIZ	/  SAVE GAME/
+	.ASCIZ	/SAVE GAME/
 	.EVEN
-PMOPT3:	.WORD	SCREEN+<20.*TILEH*LINEW>+12., 7, 0
+PMOPT3:	.WORD	SCREEN+<20.*TILEH*LINEW>+14., 7, 0
 	.BYTE	4, '1
-	.ASCIZ	/  ABORT GAME/
+	.ASCIZ	/ABORT GAME/
+	.EVEN
+; the mark of the selected item (Lmenu_select moves it)
+PMMARK:	.WORD	SCREEN+<14.*TILEH*LINEW>+12., 6, 0
+	.BYTE	4, '2
+	.ASCIZ	/> /
 	.EVEN
 	.WORD	0
-PMTAB:	.WORD	PMOPT1, PMOPT2, PMOPT3
+PMTAB:	.WORD	PMOPT1, PMOPT2, PMOPT3, PMMARK
 
 ; The robot construction screen
 ;@ ROBOT CONSTRUCTION
