@@ -48,6 +48,20 @@ La600_start:
 	CLRB	Lfd30_player_elevate_timer
 	CALL	Lcc7c_set_robot_position
 	CALL	Lbb40_count_robots
+.IF DF TESTLANDF
+	MOVB	#1, ROBOT_STRUCT_DIRECTION(R5)	; the robot faces right, an enemy robot is at (30, 8): the fire of the combat menu
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#12., ROBOT_STRUCT_HEIGHT(R5)
+	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
+	MOVB	#377, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	#200, ROBOT_STRUCT_CONTROL(R5)
+	MOV	#30., R3
+	MOV	#8., R4
+	CALL	Lcc7c_set_robot_position
+.ENDC
 .ENDC
 .IF DF TESTMOVE
 	CALL	Lnew_game		; a robot of the player walks to the right, the player stays away
@@ -1053,11 +1067,37 @@ Lb154_robot_ai_update:
 	COM	R2
 	BIC	R2, R0				; the enemy is in the direction the robot faces?
 	BEQ	Lb1d7_no_enemy_ahead
-; an enemy ahead: the robot goes on (TODO: it fires: Lb6b8, Lb6d6, with the bullets; so far Lb1cd: it does not fire)
+; an enemy ahead: the robot fires a random weapon of its own if it has a free bullet (Lb6b8, Lb6d6) and stands (the
+; desired direction 0), else it goes on in the direction (Lb1cd)
 	MOV	R4, R2
 	COM	R2
 	BIC	R2, R0				; and it is possible
 	MOVB	R0, ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOV	R5, -(SP)
+	MOV	R5, R4				; R4 = the robot that fires
+	CALL	Lb6b8_find_new_bullet_ptr
+	BNE	Lb1cd_do_not_fire
+	CALL	Ld358_random
+	MOVB	ROBOT_STRUCT_PIECES(R4), R1
+	COM	R1
+	BIC	R1, R0
+	BIC	#^C70, R0			; the weapons it has (cannon 10, missiles 20, phasers 40)
+	BEQ	Lb1cd_do_not_fire
+	MOV	#3, R1				; Lb1b7: the highest weapon bit: 3 phasers, 2 missiles, 1 cannon
+	BIT	#40, R0
+	BNE	15$
+	DEC	R1
+	BIT	#20, R0
+	BNE	15$
+	DEC	R1
+15$:	MOV	R1, R0
+	CALL	Lb6d6_weapon_fire
+	MOV	(SP)+, R5
+	CLRB	ROBOT_STRUCT_DESIRED_DIRECTION(R5)
+	MOVB	#1, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	JMP	Lb20d_move_robot
+Lb1cd_do_not_fire:
+	MOV	(SP)+, R5
 	MOVB	#1, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
 	JMP	Lb20d_move_robot
 ; Lb1d7: the enemy is in another direction: the robot turns towards it
@@ -2270,8 +2310,29 @@ Lcombat_mode:
 	TST	R0
 	BMI	90$			; the robot is destroyed
 	CMP	R0, #4
-	BNE	80$
-	CALL	Ldirect_control		; MOVE ROBOT: back to the menu of the combat afterwards
+	BEQ	20$
+	TST	R0
+	BEQ	80$			; NUCLEAR BOMB: TODO (Lb99f), so far back to the menu of the robot
+	CMP	R0, #3
+	BHI	80$			; STOP COMBAT
+; Lac99: FIRE PHASERS / MISSILES / CANNON (the items 1..3): the robot must have the weapon (the piece bit 6 - the item)
+; and the bullet 0 must be free, else nothing (TODO: the beep). The bullet 0 is only for this fire. The game goes on
+	MOV	RMROB, R4
+	MOV	R0, R2
+	NEG	R2
+	MOV	#100, R1
+	ASH	R2, R1
+	BITB	R1, ROBOT_STRUCT_PIECES(R4)
+	BEQ	10$
+	CMP	Ld7d3_bullets, #NOSLOT
+	BNE	10$
+	NEG	R0
+	ADD	#4, R0			; the weapon: 3 phasers, 2 missiles, 1 cannon
+	MOV	#Ld7d3_bullets, R5
+	CALL	Lb6d6_weapon_fire
+	CALL	Lgame_tick
+	BR	10$
+20$:	CALL	Ldirect_control		; MOVE ROBOT: back to the menu of the combat afterwards
 	TST	R0
 	BPL	10$
 	RETURN
