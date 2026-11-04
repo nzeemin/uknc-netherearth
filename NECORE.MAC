@@ -2961,8 +2961,8 @@ Lrm_close:
 	CALL	Lrm_box
 	JMP	DRHUD
 
-; The menu loop (Lacd7): up/down move the current item, FIRE chooses it, the game goes on. Returns R0 = the item,
-; or -1 if the robot is destroyed
+; The menu loop (Lacd7): up/down move the current item, FIRE chooses it, the game goes on.
+; Returns R0 = the item, or -1 if the robot is destroyed
 Lrm_menu:
 	CALL	Lrm_draw_menu
 	CLR	@#PPUKEL		; the presses before the entry do not count
@@ -3004,41 +3004,51 @@ Lcombat_mode:
 	MOV	#CMLIST, RMLST
 	MOV	#CMNIT, RMCNT
 	CALL	Lrm_menu
-	TST	R0
-	BMI	90$			; the robot is destroyed
-	CMP	R0, #4
-	BEQ	20$
-	CMP	R0, #3
-	BHI	80$			; STOP COMBAT
+	BMI	90$			; the robot is destroyed =>
+	MOV	R0, R1
+	ASL	R1
+	CALL	@CMHND(R1)		; the handler of the item (R0 = the item): returns 0 = stay in the menu,
+	BEQ	10$			; -1 = leave, the robot is destroyed, 1 = leave
+	BMI	90$
+	CLR	R0
+90$:	RETURN
+; The handlers of the items of the combat menu
+CMHND:	.WORD	Lcm_fire			; NUCLEAR BOMB
+	.WORD	Lcm_fire			; FIRE PHASERS
+	.WORD	Lcm_fire			; FIRE MISSILES
+	.WORD	Lcm_fire			; FIRE CANNON
+	.WORD	Ldirect_control			; MOVE ROBOT: 0 = back to the menu of the combat, -1 = the robot is destroyed
+	.WORD	Lcm_stop_combat			; STOP COMBAT
+
 ; Lac99: NUCLEAR BOMB / FIRE PHASERS / MISSILES / CANNON (the items 0..3): the robot must have the weapon (the piece bit 6 - the item)
 ; and the bullet 0 must be free, else nothing (TODO: the beep). The bullet 0 is only for this fire. The game goes on
+Lcm_fire:
 	MOV	RMROB, R4
 	MOV	R0, R2
 	NEG	R2
 	MOV	#100, R1
 	ASH	R2, R1
 	BITB	R1, ROBOT_STRUCT_PIECES(R4)
-	BEQ	10$
+	BEQ	20$
 	TST	R0
-	BNE	30$
+	BNE	10$
 	MOV	R4, R5			; NUCLEAR BOMB (the piece bit 6): the robot is destroyed, the menu is left
 	CALL	Lb99f_fire_nuclear_bomb
 	MOV	#-1, R0
 	RETURN
-30$:	CMP	Ld7d3_bullets, #NOSLOT
-	BNE	10$
+10$:	CMP	Ld7d3_bullets, #NOSLOT
+	BNE	20$
 	NEG	R0
 	ADD	#4, R0			; the weapon: 3 phasers, 2 missiles, 1 cannon
 	MOV	#Ld7d3_bullets, R5
 	CALL	Lb6d6_weapon_fire
 	CALL	Lgame_tick
-	BR	10$
-20$:	CALL	Ldirect_control		; MOVE ROBOT: back to the menu of the combat afterwards
-	TST	R0
-	BPL	10$
+20$:	CLR	R0			; stay in the menu
 	RETURN
-80$:	CLR	R0
-90$:	RETURN
+
+Lcm_stop_combat:
+	MOV	#1, R0			; leave the menu
+	RETURN
 
 ; DIRECT CONTROL (La941): the player drives the robot with the arrows until FIRE (the game goes on). Returns
 ; R0 = -1 if the robot is destroyed, else 0
@@ -3114,19 +3124,25 @@ Lgive_orders:
 	MOV	#5, RMCNT
 	CLR	RMCUR			; STOP AND DEFEND
 	CALL	Lrm_menu
-	TST	R0
-	BMI	90$
-	BNE	10$
+	BMI	90$			; the robot is destroyed =>
+	MOV	R0, R1
+	ASL	R1
+	JMP	@OMHND(R1)		; the handler of the item, R0 = the item
+90$:	RETURN
+; The handlers of the menu items
+OMHND:	.WORD	Lgo_stop_and_defend	; STOP AND DEFEND
+	.WORD	Lorders_miles		; ADVANCE
+	.WORD	Lorders_miles		; RETREAT
+	.WORD	Lorders_target		; SEARCH & DESTROY
+	.WORD	Lorders_target		; SEARCH & CAPTURE
+
+Lgo_stop_and_defend:
 	MOV	RMROB, R5
 	CLRB	ROBOT_STRUCT_ORDERS(R5)	; STOP AND DEFEND
+	CLR	R0
 	RETURN
-10$:	CMP	R0, #3
-	BLO	Lorders_miles		; ADVANCE (1), RETREAT (2)
-	SUB	#3, R0			; 0 = DESTROY, 1 = CAPTURE
-	BR	Lorders_target
-90$:	RETURN
 
-; ADVANCE / RETREAT (R0 = 1 / 2): the distance in miles, up/down by 5 miles, 0..50, FIRE: done (1 mile = 2 units;
+; ADVANCE / RETREAT (R0 = the item, 1 / 2): the distance in miles, up/down by 5 miles, 0..50, FIRE: done (1 mile = 2 units;
 ; 0 miles = STOP AND DEFEND). Returns R0 = -1 if the robot is destroyed
 Lorders_miles:
 	MOV	R0, -(SP)
@@ -3175,29 +3191,40 @@ Lorders_miles:
 	MOV	#-1, R0
 	RETURN
 
-; SEARCH & DESTROY (R0 = 0) / SEARCH & CAPTURE (R0 = 1): the target. Destroying the factories and the warbases needs
+; The target menus: the table of the blocks of the items, the list of the strings, then the orders of the items
+ODMENU:	.WORD	ODITAB, ODLIST
+	.BYTE	ORDERS_DESTROY_ENEMY_ROBOTS	; ENEMY ROBOTS
+	.BYTE	ORDERS_DESTROY_ENEMY_FACTORIES	; ENEMY FACTORIES
+	.BYTE	ORDERS_DESTROY_ENEMY_WARBASES	; ENEMY WARBASES
+	.EVEN
+OCMENU:	.WORD	OCITAB, OCLIST
+	.BYTE	ORDERS_CAPTURE_NEUTRAL_FACTORIES	; NEUTRAL FACTORIES
+	.BYTE	ORDERS_CAPTURE_ENEMY_FACTORIES	; ENEMY FACTORIES
+	.BYTE	ORDERS_CAPTURE_ENEMY_WARBASES	; ENEMY WARBASES
+	.EVEN
+
+; SEARCH & DESTROY (R0 = 3) / SEARCH & CAPTURE (R0 = 4, the items of the menu): the target. Destroying the factories and the warbases needs
 ; the nuclear weapon, else the order is cancelled. TODO: Lb34d_find_target: the argument of the
 ; orders, the target is searched by Lb34d. Returns R0 = -1 if the robot is destroyed
 Lorders_target:
-	MOV	R0, -(SP)
+	MOV	#ODMENU, R2		; the item 3: DESTROY
+	CMP	R0, #3
+	BEQ	10$
+	MOV	#OCMENU, R2		; the item 4: CAPTURE
+10$:	MOV	R2, -(SP)
 	CALL	Lrm_box
 	CALL	Lrm_draw_strength
-	MOV	#ODITAB, RMTAB
-	MOV	#ODLIST, RMLST
-	TST	(SP)
-	BEQ	10$
-	MOV	#OCITAB, RMTAB
-	MOV	#OCLIST, RMLST
-10$:	MOV	#3, RMCNT
+	MOV	(SP), R2
+	MOV	(R2)+, RMTAB
+	MOV	(R2)+, RMLST
+	MOV	#3, RMCNT
 	CLR	RMCUR
 	CALL	Lrm_menu
-	TST	R0
 	BMI	95$
+	MOV	(SP), R1
+	ADD	R0, R1
+	MOVB	4(R1), R0		; the orders of the item (the table after the two words of the menu)
 	MOV	RMROB, R5
-	ADD	#3, R0			; DESTROY ROBOTS = 3, FACTORIES = 4, WARBASES = 5
-	TST	(SP)
-	BEQ	20$
-	ADD	#3, R0			; CAPTURE: 6, 7, 8
 20$:	MOVB	R0, ROBOT_STRUCT_ORDERS(R5)
 	CMP	R0, #ORDERS_DESTROY_ENEMY_FACTORIES
 	BLO	30$
@@ -3240,31 +3267,26 @@ La732_land_on_robot_internal:
 	MOV	#RMNIT, RMCNT
 	MOV	RMLAST, RMCUR
 	CALL	Lrm_menu
-	TST	R0
-	BMI	90$			; the robot is destroyed
+	BMI	90$			; the robot is destroyed =>
 	MOV	R0, RMLAST
-	BNE	55$
-	CALL	Ldirect_control		; DIRECT CONTROL
-	TST	R0
-	BPL	La732_land_on_robot_internal
-	BR	90$
-55$:	CMP	R0, #1
-	BNE	60$
-	CALL	Lgive_orders		; GIVE ORDERS
-	TST	R0
-	BPL	La732_land_on_robot_internal
-	BR	90$
-60$:	CMP	R0, #2
-	BNE	80$
-	CALL	Lcombat_mode		; COMBAT MODE
-	TST	R0
-	BPL	La732_land_on_robot_internal
-	BR	90$
-80$:	MOV	RMROB, R5		; the other items: LEAVE ROBOT (the stubs)
+	MOV	R0, R1
+	ASL	R1
+	CALL	@RMHND(R1)		; the handler of the item (R0 = the item): returns 0 = back to the menu of the robot,
+	BEQ	La732_land_on_robot_internal	; else leave the menu: -1 = the robot is destroyed, 1 = LEAVE ROBOT
+90$:	JMP	Lrm_close
+; The handlers of the items of the menu of the robot
+RMHND:	.WORD	Ldirect_control		; DIRECT CONTROL
+	.WORD	Lgive_orders		; GIVE ORDERS
+	.WORD	Lcombat_mode		; COMBAT MODE
+	.WORD	Lrm_leave_robot		; LEAVE ROBOT
+
+Lrm_leave_robot:
+	MOV	RMROB, R5
 	CLRB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)	; the robot controls itself again
 	CLRB	ROBOT_STRUCT_CONTROL(R5)
 	MOVB	#5, Lfd30_player_elevate_timer	; the player floats a bit after leaving the robot
-90$:	JMP	Lrm_close
+	MOV	#1, R0			; leave the menu
+	RETURN
 
 ;------------------------------------------------------------------------------
 ; The robot construction screen (the player is on top of the "H" of his warbase)

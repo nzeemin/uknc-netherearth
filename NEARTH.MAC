@@ -252,11 +252,11 @@ STOPPU:	PPUCMW	#177777			; command PPU to exit
 
 .INCLUDE /NEPPU.MAC/			; The PPU program (PPSTA..PPEND)
 ; The frame buffer is in the memory of the PPU block: the CPU copy of the block is not needed after RUNPPU
-; copied it to the PPU memory (once). It follows the labels PPSTA and PPEND: the size of the padding must be
+; copied it to the PPU memory (once). It follows the labels PPSTA and BKP (the backup buffer BKP..PPEND is only in the PPU memory): the size of the padding must be
 ; the same in both passes of the assembler.
 FRBUF = PPSTA
-.IF GT <FRBUF+VIEW_BYTES>-PPEND
-	.BLKB	<FRBUF+VIEW_BYTES>-PPEND	; the rest of the frame buffer, if it is longer than the block
+.IF GT <FRBUF+VIEW_BYTES>-BKP
+	.BLKB	<FRBUF+VIEW_BYTES>-BKP	; the rest of the frame buffer, if it is longer than the block (the image ends at BKP)
 .ENDC
 
 PALNO:	.WORD	0		; Current palette number (CMDPAL); the palettes are in the PPU code (PALTAB)
