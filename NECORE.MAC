@@ -28,6 +28,9 @@ La600_start:
 	CALL	Lnew_game		; the player on a robot of his: the robot menu opens at once
 	MOV	#Lda00_player1_robots, R5
 	MOVB	#11, ROBOT_STRUCT_PIECES(R5)	; bipod and cannon (the bits of the pieces)
+.IF DF TESTLANDB
+	MOVB	#<11.+64.>, ROBOT_STRUCT_PIECES(R5)	; and the nuclear bomb
+.ENDC
 	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
 	CLRB	ROBOT_STRUCT_ALTITUDE(R5)
 	MOVB	#18., ROBOT_STRUCT_HEIGHT(R5)
@@ -98,6 +101,56 @@ La600_start:
 .IF DF TESTFIRE
 	CALL	TESTFI			; a shot (see TESTFI)
 .ENDC
+.IF DF TESTBOMB
+	CALL	Lnew_game		; a robot at (39, 5): the bomb destroys the factory 0 at (39, 6); TESTBOMBC: at (44, 5), TESTBOMBD:
+	MOV	#Lda00_player1_robots, R5	; at (43, 8): out of the range
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#377, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	CLRB	ROBOT_STRUCT_CONTROL(R5)
+	MOV	#39., R3
+	MOV	#5, R4
+.IF DF TESTBOMBC
+	MOV	#44., R3
+.ENDC
+.IF DF TESTBOMBD
+	MOV	#43., R3
+	MOV	#8., R4
+.ENDC
+.IF DF TESTBOMBE
+	MOV	#32., R3			; the element of the type 17 at (32, 3) is in the window
+.ENDC
+	CALL	Lcc7c_set_robot_position
+.IF DF TESTBOMBW
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5	; the robots of the enemy: (41, 7) in the window,
+	MOV	#41., R3					; (45, 5) out of it
+	MOV	#7, R4
+	CALL	TBMK
+	MOV	#<Ldb80_player2_robots+<2*ROBOT_STRUCT_SIZE>>, R5
+	MOV	#45., R3
+	MOV	#5, R4
+	CALL	TBMK
+.ENDC
+.IF NDF TESTBOMBN
+	MOV	#Lda00_player1_robots, R5
+	CALL	Lb99f_fire_nuclear_bomb
+.ENDC
+.ENDC
+.IF DF TESTBLD
+	CALL	Lnew_game		; the factory 0 and the warbase 1 are destroyed (see the screen and the records)
+.IF NDF TESTBLDN
+	CLR	R0
+	CALL	Lbbd8_destroy_factory
+	MOV	#1, R0
+	CALL	Lbbf9_destroy_warbase
+	CALL	Lbb09_update_base_factory_counts
+.ENDC
+	MOV	#34., Lfd0e_player_x		; the player looks at the factory 0 (39, 6), TESTBLDB: at the warbase 1 (261, 8)
+.IF DF TESTBLDB
+	MOV	#256., Lfd0e_player_x
+.ENDC
+	MOVB	#8., Lfd0d_player_y
+	MOVB	#18., Lfd10_player_altitude
+.ENDC
 .IF DF TESTSEEK
 	CALL	Lnew_game		; a robot of the player (orders 3) at x = 45 looks for the enemy robot at x = 60
 	MOV	#60., R3
@@ -123,6 +176,19 @@ La600_start:
 .IF DF TESTSEEKB
 	MOVB	#ORDERS_CAPTURE_NEUTRAL_FACTORIES, ROBOT_STRUCT_ORDERS(R5)	; the factory 0 is at x = 39, y = 6
 	MOV	#34., R3
+.IF DF TESTSEEKX
+	MOVB	#ORDERS_DESTROY_ENEMY_FACTORIES, ROBOT_STRUCT_ORDERS(R5)	; the bomb: the factory 0 is the enemy's
+	MOVB	#<9.+64.>, ROBOT_STRUCT_PIECES(R5)
+	MOV	R5, -(SP)
+	MOV	R3, -(SP)
+	MOV	R4, -(SP)
+	CLR	R0
+	MOV	#1, R2
+	CALL	Lbb61_assign_factory_to_player
+	MOV	(SP)+, R4
+	MOV	(SP)+, R3
+	MOV	(SP)+, R5
+.ENDC
 .ENDC
 	CALL	Lcc7c_set_robot_position
 	CALL	Lbb40_count_robots
@@ -169,6 +235,12 @@ LANDING = 1
 LANDING = 1
 .ENDC
 .IF DF TESTFIRE
+LANDING = 1
+.ENDC
+.IF DF TESTBLD
+LANDING = 1
+.ENDC
+.IF DF TESTBOMB
 LANDING = 1
 .ENDC
 .ENDC
@@ -1522,13 +1594,16 @@ Lb2dc_x_considered:
 Lb2e8_directions_done:
 	TST	R2
 	BNE	Lb306_not_at_target
-; at the target: the nuclear bomb for the orders 4 and 5 (Lb99f: TODO, so far the robot stands), else (Lb2f9) down until
+; at the target: the nuclear bomb for the orders 4 and 5 (Lb99f), else (Lb2f9) down until
 ; the first collision
 	CLR	R4
 	CMPB	ROBOT_STRUCT_ORDERS(R5), #ORDERS_DESTROY_ENEMY_FACTORIES
 	BLO	Lb2f9_inconsistent_orders
 	CMPB	ROBOT_STRUCT_ORDERS(R5), #ORDERS_CAPTURE_NEUTRAL_FACTORIES
-	BLO	Lb2f9_exit			; TODO: Lb99f_fire_nuclear_bomb
+	BHIS	Lb2f9_inconsistent_orders
+	CALL	Lb99f_fire_nuclear_bomb		; on the target the nuclear bomb destroys a building and the robot
+	CLR	R4
+	RETURN
 Lb2f9_inconsistent_orders:
 	CMPB	ROBOT_STRUCT_DIRECTION(R5), #4
 	BEQ	Lb2f9_exit			; it faces down: c = 0
@@ -1969,6 +2044,215 @@ Lb20d_move_robot:
 	JMP	Lcc7c_set_robot_position
 
 ;------------------------------------------------------------------------------
+; The destruction of the buildings (for the nuclear bomb)
+
+; Lbc1c: marks the building R0 of the array R4 (Lfd70_warbases, Lfd84_factories) as destroyed (the type 200) and
+; returns its map offset in R3. Clobbers R0, R1
+Lbc1c_mark_building_destroyed:
+	MOV	R0, R1
+	ASL	R1
+	ADD	R0, R1
+	ASL	R1				; * BUILDING_STRUCT_SIZE
+	ADD	R4, R1
+	MOVB	#200, BUILDING_STRUCT_TYPE(R1)
+	MOV	BUILDING_STRUCT_X(R1), R3
+	CLR	R0
+	BISB	BUILDING_STRUCT_Y(R1), R0
+	SWAB	R0
+	ASL	R0
+	ADD	R0, R3
+	RETURN
+
+; Lbbd8: destroys the factory R0: the flags and the type above it are removed, debris in its place
+Lbbd8_destroy_factory:
+	MOV	#Lfd84_factories, R4
+	CALL	Lbc1c_mark_building_destroyed
+	MOV	R3, -(SP)
+	SUB	#2000, R3			; 2 rows up
+	ADD	#2, R3
+	CALL	Lbc5d_remove_decoration		; a flag of the enemy
+	SUB	#2, R3
+	CALL	Lbc5d_remove_decoration		; the type of the factory
+	SUB	#2, R3
+	CALL	Lbc5d_remove_decoration		; a flag of the player
+	MOV	(SP)+, R3
+	MOV	#Lbfe2_factory, R2
+	BR	Lbc27_replace_building_by_debris
+
+; Lbbf9: destroys the warbase R0: the flags and the "H" above it are removed, debris in its place
+Lbbf9_destroy_warbase:
+	MOV	#Lfd70_warbases, R4
+	CALL	Lbc1c_mark_building_destroyed
+	MOV	R3, -(SP)
+	SUB	#4000, R3			; 4 rows up
+	CALL	Lbc5d_remove_decoration		; a flag of the enemy
+	SUB	#4, R3
+	CALL	Lbc5d_remove_decoration		; a flag of the player
+	ADD	#10, R3
+	CALL	Lbc5d_remove_decoration		; "H"
+	MOV	(SP)+, R3
+	MOV	#Lbfb2_warbase, R2
+
+; Lbc27: the building definition R2 (like a complex structure) at the map offset R3 with random debris (6 or 7) in
+; place of every element. Clobbers R0, R1, R2, R3, R4
+Lbc27_replace_building_by_debris:
+	CLR	R0
+	BISB	(R2)+, R0
+	BEQ	10$
+	CALL	Ld358_random
+	BIC	#^C1, R0
+	ADD	#6, R0
+	CALL	Lbd91_add_element_to_map
+10$:	MOVB	(R2)+, R1
+	MOVB	(R2)+, R4
+	MOV	R1, R0
+	BIS	R4, R0
+	BEQ	90$				; x == y == 0: the end
+	ADD	R1, R3
+	ASH	#9., R4
+	ADD	R4, R3
+	BR	Lbc27_replace_building_by_debris
+90$:	RETURN
+
+;------------------------------------------------------------------------------
+.IF DF TESTBOMBW
+TBMK:	MOV	R5, -(SP)
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#377, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	#200, ROBOT_STRUCT_CONTROL(R5)
+	CALL	Lcc7c_set_robot_position
+	MOV	(SP)+, R5
+	RETURN
+.ENDC
+; Lb99f: the nuclear bomb of the robot R5: destroys at most one building (the first found: the warbases first) near
+; the robot: the distance in y: |y + 1 (+ 4 for a warbase) - y of the building| and in x: |x - x of the building| both
+; < 7 and their sum < 10 for a warbase, < 5 and < 7 for a factory. The robot is destroyed too (by Lb0fa in the next
+; cycle). TODO: the robots and the map elements around (the window 9x9), the visual effect, the sound.
+BMAX:	.WORD	0			; the maximal distance in each axis
+BMSUM:	.WORD	0			; the maximal sum of the distances
+BMDY:	.WORD	0
+BMIDX:	.WORD	0			; the building
+Lb99f_fire_nuclear_bomb:
+	MOV	R5, -(SP)
+	CLR	BMIDX
+	MOV	#7, BMAX
+	MOV	#10., BMSUM
+	MOV	#Lfd70_warbases, R4
+10$:	BITB	#200, BUILDING_STRUCT_TYPE(R4)
+	BNE	50$				; already destroyed
+	CLR	R0
+	BISB	ROBOT_STRUCT_Y(R5), R0
+	CMP	BMIDX, #N_WARBASES
+	BHIS	15$
+	ADD	#4, R0				; a warbase
+15$:	INC	R0
+	CLR	R1
+	BISB	BUILDING_STRUCT_Y(R4), R1
+	SUB	R1, R0
+	BGE	16$
+	NEG	R0
+16$:	CMP	R0, BMAX
+	BHIS	50$				; too far
+	MOV	R0, BMDY
+	MOV	BUILDING_STRUCT_X(R4), R0
+	SUB	ROBOT_STRUCT_X(R5), R0
+	BGE	17$
+	NEG	R0
+17$:	CMP	R0, BMAX
+	BHIS	50$
+	ADD	BMDY, R0
+	CMP	R0, BMSUM
+	BLO	60$				; in range
+50$:	ADD	#BUILDING_STRUCT_SIZE, R4
+	INC	BMIDX
+	CMP	BMIDX, #N_WARBASES
+	BNE	55$
+	MOV	#5, BMAX			; the factories
+	MOV	#7, BMSUM
+55$:	CMP	BMIDX, #<N_WARBASES+N_FACTORIES>
+	BNE	10$
+	BR	70$
+60$:	MOV	BMIDX, R0
+	CMP	R0, #N_WARBASES
+	BHIS	65$
+	CALL	Lbbf9_destroy_warbase
+	BR	70$
+65$:	SUB	#N_WARBASES, R0
+	CALL	Lbbd8_destroy_factory
+70$:	MOV	(SP), R5
+	CALL	Lba02_nuclear_window
+	MOV	(SP)+, R5
+	CLRB	ROBOT_STRUCT_STRENGTH(R5)	; the robot is destroyed
+	CALL	Lcca0_compute_player_map_ptr	; the player is on the map again (the debris may have covered the mark)
+	BISB	#MAPB_PLAYER, Ldd00_map(R3)
+	MOVB	#1, Lfd52_update_radar_buffer_signal
+	CALL	Lbb40_count_robots
+	CALL	Lbb09_update_base_factory_counts
+	JMP	Lrb_hud
+
+; Lba02: the window 9x9 around the robot R5 (the corners are cut: the rows of 5, 7, 9, ..., 7, 5 cells), the row 0 and
+; the rows out of the map are skipped: a robot there is destroyed (the slot is free, the mark is off), a map element
+; of the types 17..20 (not the terrain, not the fences, not the parts of the buildings) becomes random debris.
+; Clobbers R0..R4, R5
+BWROW:	.WORD	0			; the first cell of the row of the window
+BWC:	.WORD	0			; the rows left
+BWB:	.WORD	0			; the cells left in the row
+Lba02_nuclear_window:
+	MOV	ROBOT_STRUCT_MAP_PTR(R5), R4
+	SUB	#<4*MAP_LENGTH+4>, R4
+	MOV	R4, BWROW
+	MOV	#9., BWC
+10$:	MOV	BWROW, R4
+	CMP	R4, #MAP_LENGTH
+	BLO	80$				; out of the map: the row 0 is skipped too
+	CMP	R4, #MAP_SIZE
+	BHIS	80$
+	MOV	BWC, R0
+	MOV	#9., R1
+	CMP	R0, #1
+	BEQ	12$
+	CMP	R0, #9.
+	BEQ	12$
+	CMP	R0, #2
+	BEQ	14$
+	CMP	R0, #8.
+	BNE	16$
+	BR	14$
+12$:	INC	R4				; the first and the last row: 5 cells
+	SUB	#2, R1
+14$:	INC	R4				; the second and the last but one: 7 cells
+	SUB	#2, R1
+16$:	MOV	R1, BWB
+20$:	MOV	R4, R3
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BEQ	30$
+	CALL	Lcdd8_get_robot_at_ptr
+	BNE	30$
+	MOV	#NOSLOT, (R5)			; the robot is destroyed
+	BICB	#MAPB_OCCUPIED, Ldd00_map(R3)
+30$:	MOVB	Ldd00_map(R3), R0
+	BIT	#40, R0
+	BNE	40$
+	BIC	#^C37, R0
+	CMP	R0, #17.
+	BLO	40$				; the terrain
+	CMP	R0, #21.
+	BHIS	40$				; the fences, the parts of the buildings
+	CALL	Ld358_random
+	BIC	#^C1, R0
+	ADD	#6, R0
+	CALL	Lbd91_add_element_to_map
+40$:	INC	R4
+	DEC	BWB
+	BNE	20$
+80$:	ADD	#MAP_LENGTH, BWROW
+	DEC	BWC
+	BNE	10$
+	RETURN
+
+;------------------------------------------------------------------------------
 ; Ladb7: the capture of the buildings (every cycle, from Lad62). A building (4 warbases, 24 factories) with a robot at
 ; its position counts the cycles; after BUILDING_CAPTURE_TIME the side of the robot owns it. Then the counts and the
 ; panel are updated
@@ -2311,11 +2595,9 @@ Lcombat_mode:
 	BMI	90$			; the robot is destroyed
 	CMP	R0, #4
 	BEQ	20$
-	TST	R0
-	BEQ	80$			; NUCLEAR BOMB: TODO (Lb99f), so far back to the menu of the robot
 	CMP	R0, #3
 	BHI	80$			; STOP COMBAT
-; Lac99: FIRE PHASERS / MISSILES / CANNON (the items 1..3): the robot must have the weapon (the piece bit 6 - the item)
+; Lac99: NUCLEAR BOMB / FIRE PHASERS / MISSILES / CANNON (the items 0..3): the robot must have the weapon (the piece bit 6 - the item)
 ; and the bullet 0 must be free, else nothing (TODO: the beep). The bullet 0 is only for this fire. The game goes on
 	MOV	RMROB, R4
 	MOV	R0, R2
@@ -2324,7 +2606,13 @@ Lcombat_mode:
 	ASH	R2, R1
 	BITB	R1, ROBOT_STRUCT_PIECES(R4)
 	BEQ	10$
-	CMP	Ld7d3_bullets, #NOSLOT
+	TST	R0
+	BNE	30$
+	MOV	R4, R5			; NUCLEAR BOMB (the piece bit 6): the robot is destroyed, the menu is left
+	CALL	Lb99f_fire_nuclear_bomb
+	MOV	#-1, R0
+	RETURN
+30$:	CMP	Ld7d3_bullets, #NOSLOT
 	BNE	10$
 	NEG	R0
 	ADD	#4, R0			; the weapon: 3 phasers, 2 missiles, 1 cannon
