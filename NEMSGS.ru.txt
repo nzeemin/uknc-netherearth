@@ -38,6 +38,12 @@
 "CHASSIS "	= "ШАССИ   "
 "RADAR:"	= "РАДАР:"
 
+[GAME OVER]
+"YOU HAVE NO BASES LEFT" = "У ВАС НЕ ОСТАЛОСЬ БАЗ "
+"BETTER LUCK NEXT TIME!" = "УДАЧИ В СЛЕДУЮЩИЙ РАЗ!"
+" INSIGNIANS DESTROYED " = " ИНОПЛАНЕТЯНЕ РАЗБИТЫ "
+"    YOU HAVE WON !    " = "    ВЫ ПОБЕДИЛИ !     "
+
 [PAUSE MENU]
 "GAME PAUSED"	= "   ПАУЗА"
 "> CONTINUE"	= "> ПРОДОЛЖИТЬ"

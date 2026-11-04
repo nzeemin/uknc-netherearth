@@ -59,6 +59,17 @@ HUDTAB:
 	.EVEN
 	.WORD	0
 
+;@ GAME OVER
+; The end of the game: the defeat and the victory, two lines under the radar, centered (the screen is 40 columns of 16 pixels), an empty row between them
+GOVL:
+	MSTR	28., 9., 2, 0, <YOU HAVE NO BASES LEFT>
+	MSTR	30., 9., 2, 0, <BETTER LUCK NEXT TIME!>
+	.WORD	0
+GOVW:
+	MSTR	28., 9., 6, 0, < INSIGNIANS DESTROYED >
+	MSTR	30., 9., 6, 0, <    YOU HAVE WON !    >
+	.WORD	0
+
 ; The main menu
 ;@ MAIN MENU
 ; The title: double height (control code 4, '2')

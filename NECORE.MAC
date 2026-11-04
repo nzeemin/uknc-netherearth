@@ -115,6 +115,36 @@ La600_start:
 	CALL	TAMK
 	CALL	Lbb40_count_robots
 .ENDC
+.IF DF TESTEND
+	INC	TECNT			; how many times the test started (the restart after the end)
+.IF DF NOMENU
+	CALL	Lnew_game		; the end: TESTEND: the bases 1..3 of the enemy are destroyed (the victory), TESTENDD: the base 0 of the player
+.ENDC
+.IF NDF TESTENDD
+	MOV	#1, R0
+	CALL	Lbbf9_destroy_warbase
+	MOV	#2, R0
+	CALL	Lbbf9_destroy_warbase
+	MOV	#3, R0
+	CALL	Lbbf9_destroy_warbase
+.IFF
+	CLR	R0
+	CALL	Lbbf9_destroy_warbase
+.ENDC
+	CALL	Lbb09_update_base_factory_counts
+.ENDC
+.IF DF TESTDAY
+	CALL	Lnew_game		; the day: the factory 0 (type 4) to the player, resources 95 and 10, the enemy 0; 23:55
+	CLR	R0
+	CLR	R2
+	CALL	Lbb61_assign_factory_to_player
+	CALL	Lbb09_update_base_factory_counts
+	MOVB	#95., Lfd22_player1_resource_counts
+	MOVB	#10., Lfd22_player1_resource_counts+1
+	CLRB	Lfd4a_player2_resource_counts
+	MOVB	#23., Lfd36_hours
+	MOVB	#55., Lfd35_minutes
+.ENDC
 .IF DF TESTAIO
 	CALL	Lnew_game		; new orders of a robot of the enemy, 64 times: the histogram of the orders in AIOCNT
 	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
@@ -295,6 +325,15 @@ LANDING = 1
 .ENDC
 .IF DF TESTAI
 LANDING = 1
+.ENDC
+.IF DF TESTDAY
+LANDING = 1
+.ENDC
+.IF DF TESTEND
+LANDING = 1
+.ENDC
+.IF DF TESTLANDB
+NOGAMEOVER = 1
 .ENDC
 .ENDC
 ; The main game loop
@@ -2324,6 +2363,85 @@ Lb989_orders_assigned:
 90$:	RETURN
 
 ;------------------------------------------------------------------------------
+; Lae38: the resources of the day (once a day, from Lad62): for each player the general resources + 5 * the bases, the
+; resources of each type of the factories + 2 * the factories of that type, each at most 99. Then the panel
+Lae38_gain_day_resources:
+	MOV	#Lfd22_player1_resource_counts, R4
+	MOV	#Lfd3a_p1_base_factory_counts, R3
+	CALL	Lae4e_gain_day_resources_player
+	MOV	#Lfd4a_player2_resource_counts, R4
+	MOV	#Lfd42_p2_base_factory_counts, R3
+	CALL	Lae4e_gain_day_resources_player
+	JMP	Lrb_hud
+
+; R4 = the resources of a player, R3 = the numbers of his bases and factories (7 bytes each)
+Lae4e_gain_day_resources_player:
+	CLR	R0
+	BISB	(R3)+, R0
+	MOV	R0, R1
+	ASL	R0
+	ASL	R0
+	ADD	R1, R0				; the bases * 5
+	CALL	Lae62_add_limit_100
+	MOV	#6, R2
+10$:	INC	R4
+	CLR	R0
+	BISB	(R3)+, R0
+	ASL	R0				; the factories * 2
+	CALL	Lae62_add_limit_100
+	SOB	R2, 10$
+	RETURN
+
+; (R4) += R0, at most 99
+Lae62_add_limit_100:
+	CLR	R1
+	BISB	(R4), R1
+	ADD	R0, R1
+	CMP	R1, #100.
+	BLO	10$
+	MOV	#99., R1
+10$:	MOVB	R1, (R4)
+	RETURN
+
+;------------------------------------------------------------------------------
+; Lae6b: the end of the game (every cycle, from Lad62): the enemy has no bases: the victory, else the player has no
+; bases: the defeat. The game area and the radar stop (CMDMENU: the picture stays), the panel is the usual one, two
+; lines of the message under the game area, 2 seconds, then any key and the game starts again (the stack is reset: it
+; is called from the loops of the menus too). TODO: the beep (Lccac, 250)
+Lae6b_game_over_check:
+	TSTB	Lfd42_p2_base_factory_counts
+	BEQ	10$
+	TSTB	Lfd3a_p1_base_factory_counts
+	BNE	90$
+	CALL	Lgo_stop_and_panel
+	PPUSTS	GOVL
+	BR	20$
+10$:	CALL	Lgo_stop_and_panel
+	PPUSTS	GOVW
+20$:	MOV	@#PPUTCK, R2			; 2 seconds
+25$:	MOV	@#PPUTCK, R0
+	SUB	R2, R0
+	CMP	R0, #100.
+	BLO	25$
+30$:	TST	@#PPUKEY			; the keys are released
+	BNE	30$
+	CLR	@#PPUKEL
+40$:	MOV	@#PPUKEY, R0			; any key
+	BIS	@#PPUKEL, R0
+	BEQ	40$
+	CLR	@#PPUKEL
+	MOV	#<STACK+<20*2>>, SP
+	JMP	La600_start
+90$:	RETURN
+
+.IF DF TESTEND
+TECNT:	.WORD	0
+.ENDC
+Lgo_stop_and_panel:
+	PPUCMW	#CMDMENU
+	JMP	Lrm_close			; the usual panel
+
+;------------------------------------------------------------------------------
 ; The destruction of the buildings (for the nuclear bomb)
 
 ; Lbc1c: marks the building R0 of the array R4 (Lfd70_warbases, Lfd84_factories) as destroyed (the type 200) and
@@ -3814,11 +3932,16 @@ Lad62_increase_time:
 	BNE	Lad85_increase_time_done
 	CLRB	Lfd36_hours
 	INC	Lfd37_days
-	; TODO: CALL Lae38_gain_day_resources
+.IF DF LANDING
+	CALL	Lae38_gain_day_resources
+.ENDC
 Lad85_increase_time_done:
 	CALL	DRTIME			; the day and the time on the panel
-	; TODO: Lae6b_game_over_check
+
 .IF DF LANDING
+.IF NDF NOGAMEOVER
+	CALL	Lae6b_game_over_check
+.ENDC
 	CALL	Ladb7_capture_buildings
 .ENDC
 Lae1d_wait_for_the_cycle:
