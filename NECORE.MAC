@@ -78,6 +78,35 @@ La600_start:
 .IF DF TESTTGT
 	CALL	TESTTG			; the search of the target (see TESTTG)
 .ENDC
+.IF DF TESTSEEK
+	CALL	Lnew_game		; a robot of the player (orders 3) at x = 45 looks for the enemy robot at x = 60
+	MOV	#60., R3
+	MOV	#8., R4
+	MOV	#<Ldb80_player2_robots+<1*ROBOT_STRUCT_SIZE>>, R5
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	MOVB	#200, ROBOT_STRUCT_CONTROL(R5)
+	CALL	Lcc7c_set_robot_position
+	MOV	#Lda00_player1_robots, R5
+	MOVB	#4, ROBOT_STRUCT_DIRECTION(R5)
+	MOVB	#9., ROBOT_STRUCT_PIECES(R5)
+	MOVB	#100., ROBOT_STRUCT_STRENGTH(R5)
+	MOVB	#1, ROBOT_STRUCT_CYCLES_TO_UPDATE(R5)
+	CLRB	ROBOT_STRUCT_CONTROL(R5)
+	MOVB	#ORDERS_DESTROY_ENEMY_ROBOTS, ROBOT_STRUCT_ORDERS(R5)
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CLRB	ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	MOV	#45., R3
+	MOV	#8., R4
+.IF DF TESTSEEKB
+	MOVB	#ORDERS_CAPTURE_NEUTRAL_FACTORIES, ROBOT_STRUCT_ORDERS(R5)	; the factory 0 is at x = 39, y = 6
+	MOV	#34., R3
+.ENDC
+	CALL	Lcc7c_set_robot_position
+	CALL	Lbb40_count_robots
+.ENDC
 .IF DF TESTCONS
 	CALL	Lnew_game		; the player above the "H" of his warbase: the construction screen opens at once
 	MOV	#22., Lfd0e_player_x
@@ -111,6 +140,9 @@ LANDING = 1
 LANDING = 1
 .ENDC
 .IF DF TESTTGT
+LANDING = 1
+.ENDC
+.IF DF TESTSEEK
 LANDING = 1
 .ENDC
 .ENDC
@@ -643,6 +675,26 @@ Lbb86_assign_warbase_to_player:
 	MOV	#7, R1				; the flag of the player
 	BR	Lbc43_add_decoration_to_map
 
+; Gives a factory to a player: R0 = the factory, R2 = the owner (0 the player, 1 the enemy). Removes the old flags
+; above it and puts the new one: the flag of the player (7) or of the enemy (8), to the right.
+Lbb61_assign_factory_to_player:
+	MOV	R2, -(SP)
+	MOV	#Lfd84_factories, R4
+	CALL	Lbbb9_mark_ath_building
+	SUB	#2000, R3			; 2 rows up
+	ADD	#2, R3
+	CALL	Lbc5d_remove_decoration		; a flag of the enemy
+	SUB	#4, R3
+	CALL	Lbc5d_remove_decoration		; a flag of the player
+	MOV	(SP)+, R2
+	TST	R2
+	BEQ	10$
+	ADD	#4, R3
+	MOV	#8., R1				; the flag of the enemy
+	BR	Lbc43_add_decoration_to_map
+10$:	MOV	#7, R1				; the flag of the player
+	BR	Lbc43_add_decoration_to_map
+
 ; Counts the warbases and the factories of each type of each player
 Lbb09_update_base_factory_counts:
 	MOV	#Lfd3a_p1_base_factory_counts, R1
@@ -937,6 +989,19 @@ Lb41d_find_nearest_robot:
 	CMP	R2, #377
 	RETURN
 
+; Lb3f9: R5 = the robot that searches => R2 = the target robot (the row of the table of the opponent by the argument of
+; the orders). Clobbers R0
+Lb3f9_find_target_robot_ptr:
+	MOV	#Lda00_player1_robots, R2	; the enemy AI looks for the robots of the player,
+	TSTB	Lfd51_robot_player_or_enemy
+	BNE	10$
+	MOV	#Ldb80_player2_robots, R2	; the player for the robots of the enemy
+10$:	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5), R0
+	ASH	#4, R0				; * ROBOT_STRUCT_SIZE
+	ADD	R0, R2
+	RETURN
+
 ; Lb3d5: R0 = the orders => R5 = the first building to look at, R1 = their number, R2 = the flags of the wanted
 ; buildings in the type byte: 040 enemy of the player (bit 5), 0100 of the player (bit 6) as seen by the robot that
 ; searches, 0 neutral
@@ -1074,9 +1139,103 @@ Lb222_choose_direction_to_move:
 	BEQ	10$				; STOP AND DEFEND: no direction
 	CMP	R0, #ORDERS_DESTROY_ENEMY_ROBOTS
 	BLO	Lb326_choose_by_orders
-; TODO: the orders with a target (Lb258..Lb2f9): so far the robot stands
+	BEQ	6$
+	JMP	Lb289_choose_direction_buildings
+; DESTROY ENEMY ROBOTS: the target robot
+6$:
+	TSTB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	BMI	Lb258_find_new_robot_target	; no target yet
+	CALL	Lb3f9_find_target_robot_ptr
+	CMP	(R2), #NOSLOT
+	BEQ	Lb258_find_new_robot_target	; the target is destroyed
+	MOV	ROBOT_STRUCT_X(R5), R0
+	SUB	ROBOT_STRUCT_X(R2), R0
+	BGE	5$
+	NEG	R0
+5$:	CMP	R0, #50.
+	BHIS	Lb258_find_new_robot_target	; the target is too far
+	BR	Lb26d_choose_direction_to_target
 10$:	CLR	R4
 	RETURN
+
+; Lb258: the nearest robot of the opponent becomes the target (none: a random direction)
+Lb258_find_new_robot_target:
+	MOVB	#377, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	MOV	R3, -(SP)
+	MOV	R4, -(SP)
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CALL	Lb41d_find_nearest_robot
+	MOV	(SP)+, R4
+	MOV	(SP)+, R3
+	MOVB	R2, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	CMP	R2, #377
+	BEQ	Lb33e_pick_direction_at_random
+; Lb26d: the target robot: dy = y - the y of the target (R1), dx = x - the x of the target (R0)
+Lb26d_choose_direction_to_target:
+	CALL	Lb3f9_find_target_robot_ptr
+	MOVB	ROBOT_STRUCT_Y(R5), R1
+	MOVB	ROBOT_STRUCT_Y(R2), R0
+	SUB	R0, R1
+	MOV	ROBOT_STRUCT_X(R5), R0
+	SUB	ROBOT_STRUCT_X(R2), R0
+	CLR	R2				; d = the good directions (none yet)
+	TST	R0
+	BEQ	Lb2dc_x_considered	; the same x
+; Lb2d5: R0 = dx, R1 = dy: the good directions in R2: the target is to the right: 1, to the left: 2
+Lb2d5_choose_direction_xy:
+	MOV	#2, R2
+	TST	R0
+	BGE	Lb2dc_x_considered
+	MOV	#1, R2
+Lb2dc_x_considered:
+	TST	R1
+	BEQ	Lb2e8_directions_done
+	BLT	10$
+	BIS	#10, R2				; the target is above (dy > 0)
+	BR	Lb2e8_directions_done
+10$:	BIS	#4, R2				; below
+Lb2e8_directions_done:
+	TST	R2
+	BNE	Lb306_not_at_target
+; at the target: the nuclear bomb for the orders 4 and 5 (Lb99f: TODO, so far the robot stands), else (Lb2f9) down until
+; the first collision
+	CLR	R4
+	CMPB	ROBOT_STRUCT_ORDERS(R5), #ORDERS_DESTROY_ENEMY_FACTORIES
+	BLO	Lb2f9_inconsistent_orders
+	CMPB	ROBOT_STRUCT_ORDERS(R5), #ORDERS_CAPTURE_NEUTRAL_FACTORIES
+	BLO	Lb2f9_exit			; TODO: Lb99f_fire_nuclear_bomb
+Lb2f9_inconsistent_orders:
+	CMPB	ROBOT_STRUCT_DIRECTION(R5), #4
+	BEQ	Lb2f9_exit			; it faces down: c = 0
+	MOV	#4, R4				; down, until it collides
+	MOVB	#377, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+Lb2f9_exit:
+	RETURN
+
+; Lb306: R0 = dx, R2 = the good directions, R4 = c, R3 = b: |dx| >= 8: follow the target (Lb326), else a random
+; direction among the good and possible ones for |dx| - 1 steps
+Lb306_not_at_target:
+	MOVB	R0, R1				; l = the low byte of dx
+	BPL	10$
+	NEG	R1
+10$:	MOV	R4, R3				; b = c
+	CMP	R1, #8.
+	BLO	20$
+	MOV	R2, R0				; the good directions
+	BR	Lb326_choose_by_orders
+20$:	BIT	R4, R2
+	BEQ	Lb33e_pick_direction_at_random	; no good direction is possible
+	MOV	R2, R3
+	MOV	R4, R0
+	COM	R0
+	BIC	R0, R3				; b = the good ones that are possible
+	BIT	#3, R3
+	BEQ	Lb33e_pick_direction_at_random	; it cannot go left/right
+	TST	R1
+	BEQ	Lb33e_pick_direction_at_random	; the same x
+	DEC	R1
+	MOVB	R1, ROBOT_STRUCT_KEEP_WALKING_STEPS(R5)
+	BR	Lb33e_pick_direction_at_random
 
 ; Lb326: ADVANCE (1: right) / RETREAT (2: left): R0 = the orders, R3 = b = the possible directions, R4 = c
 Lb326_choose_by_orders:
@@ -1110,6 +1269,69 @@ Lb33e_pick_direction_at_random:
 	BR	10$
 Lb33e_done:
 	RETURN
+
+; Lb2b0: R0 = the index of a building of the kind wanted by the orders of the robot R5 => R1 = its structure, R2 = the flags
+; of the wanted buildings (Lb3d5). Clobbers R0
+Lb2b0_building_ptr:
+	MOV	R0, -(SP)
+	MOVB	ROBOT_STRUCT_ORDERS(R5), R0
+	MOV	R5, -(SP)
+	CALL	Lb3d5_prepare_building_search
+	MOV	R5, R1
+	MOV	(SP)+, R5
+	MOV	(SP)+, R0
+	ASL	R0
+	ADD	R0, R1
+	ASL	R0
+	ADD	R0, R1				; + 6 * the index (BUILDING_STRUCT_SIZE)
+	RETURN
+
+; Lb289: the orders to capture / destroy a building: the target is the building of the argument of the orders if it is
+; still of the wanted kind, else a new one is searched (Lb34d); none: c = 0 and an enemy AI robot goes for the robots.
+; (In the original after the search the coordinates are taken from a pointer that is not the target at that moment;
+; here from the target.)
+Lb289_choose_direction_buildings:
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5), R0
+	CMP	R0, #377
+	BEQ	10$				; no target yet
+	CALL	Lb2b0_building_ptr
+	MOVB	BUILDING_STRUCT_TYPE(R1), R0
+	BIC	#^C340, R0
+	CMP	R0, R2
+	BEQ	Lb2bb_to_building
+10$:	MOV	R3, -(SP)			; a new target
+	MOV	R4, -(SP)
+	CLR	R0
+	BISB	ROBOT_STRUCT_ORDERS(R5), R0
+	MOV	ROBOT_STRUCT_X(R5), R3
+	CALL	Lb34d_find_target
+	MOV	(SP)+, R4
+	MOV	(SP)+, R3
+	CMP	R2, #377
+	BNE	20$				; Lb2b8: the target is found
+	CLR	R4				; no target
+	TSTB	ROBOT_STRUCT_CONTROL(R5)
+	BPL	90$
+	MOVB	#ORDERS_DESTROY_ENEMY_ROBOTS, ROBOT_STRUCT_ORDERS(R5)	; the enemy AI goes for the robots
+90$:	RETURN
+20$:	MOVB	R2, ROBOT_STRUCT_ORDERS_ARGUMENT(R5)
+	MOV	R2, R0
+	CALL	Lb2b0_building_ptr
+; Lb2bb: the building R1: dx = x - its x (R0), dy = y - its y (R1); if the x differs, the target is 3 rows below it
+Lb2bb_to_building:
+	MOV	R1, R2
+	MOVB	ROBOT_STRUCT_Y(R5), R1
+	MOVB	BUILDING_STRUCT_Y(R2), R0
+	SUB	R0, R1
+	MOV	ROBOT_STRUCT_X(R5), R0
+	SUB	BUILDING_STRUCT_X(R2), R0
+	CLR	R2
+	TST	R0
+	BNE	30$
+	JMP	Lb2dc_x_considered
+30$:	SUB	#3, R1
+	JMP	Lb2d5_choose_direction_xy
 
 ; ----- The movement of the robots (Lb513..Lb5f3, Lb471..Lb4f2, Lb20d). The map offsets: a step in y is MAP_LENGTH.
 ; The flags of the collision checks: Z = free, NZ = a collision (as in the original).
@@ -1420,6 +1642,62 @@ Lb20d_move_robot:
 	CALL	Lb471_move_robot_one_step
 	CALL	Lb5f3_speed_by_terrain
 	JMP	Lcc7c_set_robot_position
+
+;------------------------------------------------------------------------------
+; Ladb7: the capture of the buildings (every cycle, from Lad62). A building (4 warbases, 24 factories) with a robot at
+; its position counts the cycles; after BUILDING_CAPTURE_TIME the side of the robot owns it. Then the counts and the
+; panel are updated
+.IF DF TESTFASTCAP
+CAPTIME = 10.
+.IFF
+CAPTIME = BUILDING_CAPTURE_TIME
+.ENDC
+CPIDX:	.WORD	0			; the building
+CPCNT:	.WORD	0			; the number of the captures in this cycle
+
+Ladb7_capture_buildings:
+	CLR	CPIDX
+	CLR	CPCNT
+	MOV	#Lfd70_warbases, R4
+10$:	MOV	BUILDING_STRUCT_X(R4), R3
+	CLR	R0
+	BISB	BUILDING_STRUCT_Y(R4), R0
+	SWAB	R0
+	ASL	R0
+	ADD	R0, R3				; the map offset of the building
+	BITB	#MAPB_OCCUPIED, Ldd00_map(R3)
+	BNE	20$
+	CLRB	BUILDING_STRUCT_TIMER(R4)	; nothing in front of it
+	BR	90$
+20$:	INCB	BUILDING_STRUCT_TIMER(R4)
+	CMPB	BUILDING_STRUCT_TIMER(R4), #CAPTIME
+	BLO	90$
+	CLRB	BUILDING_STRUCT_TIMER(R4)	; captured, if it is a robot
+	CALL	Lcdd8_get_robot_at_ptr
+	BNE	90$				; no robot (the player, the debris)
+	CLR	R2
+	TSTB	ROBOT_STRUCT_CONTROL(R5)
+	BPL	30$
+	INC	R2				; the robot of the enemy
+30$:	INC	CPCNT
+	MOV	R4, -(SP)
+	MOV	CPIDX, R0
+	CMP	R0, #N_WARBASES
+	BHIS	40$
+	CALL	Lbb86_assign_warbase_to_player	; a warbase
+	BR	50$
+40$:	SUB	#N_WARBASES, R0
+	CALL	Lbb61_assign_factory_to_player	; a factory
+50$:	MOV	(SP)+, R4
+90$:	ADD	#BUILDING_STRUCT_SIZE, R4
+	INC	CPIDX
+	CMP	CPIDX, #<N_WARBASES+N_FACTORIES>
+	BNE	10$
+	TST	CPCNT
+	BEQ	95$
+	CALL	Lbb09_update_base_factory_counts
+	JMP	Lrb_hud				; the numbers of the panel
+95$:	RETURN
 
 ;------------------------------------------------------------------------------
 ; The tick of the game inside the menus (the game goes on while the menu of a robot is open): the frame, the radar,
@@ -2518,7 +2796,10 @@ Lad62_increase_time:
 	; TODO: CALL Lae38_gain_day_resources
 Lad85_increase_time_done:
 	CALL	DRTIME			; the day and the time on the panel
-	; TODO: Lae6b_game_over_check, the capture of the buildings
+	; TODO: Lae6b_game_over_check
+.IF DF LANDING
+	CALL	Ladb7_capture_buildings
+.ENDC
 Lae1d_wait_for_the_cycle:
 	MOV	@#PPUTCK, R0
 	SUB	CYCT0, R0
