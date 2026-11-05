@@ -2430,7 +2430,7 @@ Lae6b_game_over_check:
 	BIS	@#PPUKEL, R0
 	BEQ	40$
 	CLR	@#PPUKEL
-	MOV	#<STACK+<20*2>>, SP
+	MOV	#<STACK+<STKW*2>>, SP
 	JMP	La600_start
 90$:	RETURN
 
@@ -3114,6 +3114,7 @@ Lorders_miles:
 	MOV	R0, -(SP)
 	MOV	RMROB, R5
 	MOVB	R0, ROBOT_STRUCT_ORDERS(R5)
+	CLRB	ROBOT_STRUCT_ORDERS_ARGUMENT(R5)	; no distance yet (the old argument could be 377: no target)
 	CALL	Lrm_box
 	CALL	Lrm_draw_strength
 	MOV	#ADLIST, R2
@@ -3720,41 +3721,29 @@ MNB_SCALE = 7
 MNLST:	.WORD	0			; Lmenu_select: the list of the strings of the items
 MNTAB1:	.WORD	0			; the table of the item blocks
 MNCNT:	.WORD	0			; the number of the items
+MNOLD:	.WORD	0			; the item the cursor has left
+MNEBS = 26.				; the size in bytes of an erase block (the list of the items starts with one erase block per item)
 
 ; Selects an item of a menu: arrows up/down select (MNSEL = the selected item, set by the caller), fire
-; (Shift) chooses, STOP leaves. R0 = the word address of the list of the strings of the items (MOVHW, PPU command CMDSTS),
-; R1 = the table of the addresses of the item blocks in it, R2 = the number of the items.
-; Returns R0 = the chosen item (0..) or -1 (STOP).
+; (Shift) chooses, STOP leaves. R0 = the word address of the list of the strings of the items (MOVHW, PPU command CMDSTS:
+; one erase block of MNEBS bytes for each item, then the blocks of the items and the block of the mark), R1 = the
+; table of the addresses of the item blocks in it and after them the block of the mark, R2 = the number of the items.
+; The list is drawn once, then only the two items (the one that the cursor leaves and the one it goes to) and the mark are
+; drawn again. Returns R0 = the chosen item (0..) or -1 (STOP).
 Lmenu_select:
 	MOV	R0, MNLST
 	MOV	R1, MNTAB1
 	MOV	R2, MNCNT
 	CLR	@#PPUKEL		; the presses before the entry do not count
-Lc106_menu_redraw_options:
-	MOV	MNTAB1, R3
-	MOV	MNCNT, R2
-	ASL	R2
-	ADD	R3, R2
-	MOV	(R2), R2		; the block of the mark: after the items in the table
-	CLR	R4
-10$:	MOV	(R3)+, R5
-	CMP	R4, MNSEL
-	BEQ	20$
-	MOV	#7, MNB_INK(R5)		; an item: white, normal height
-	MOVB	#'1, MNB_SCALE(R5)
-	BR	30$
-20$:	MOV	#6, MNB_INK(R5)		; the selected item: yellow, double height, the mark is at the two columns left of it
-	MOVB	MNSCL, MNB_SCALE(R5)
-	MOV	(R5), R0
-	SUB	#2, R0
-	MOV	R0, (R2)
-	MOV	#6, MNB_INK(R2)
-	MOVB	MNSCL, MNB_SCALE(R2)
-30$:	INC	R4
-	CMP	R4, MNCNT
+	CLR	R0
+10$:	MOV	R0, -(SP)
+	CALL	Lms_set_item
+	MOV	(SP)+, R0
+	INC	R0
+	CMP	R0, MNCNT
 	BLO	10$
-40$:	TST	@#PPUCOM		; wait for the PPU to be free (it may still read PPUDAT)
-	BNE	40$
+20$:	TST	@#PPUCOM		; wait for the PPU to be free (it may still read PPUDAT)
+	BNE	20$
 	MOV	MNLST, @#PPUDAT
 	PPUCMW	#CMDSTS
 Lc1a1_wait_for_key_press_loop:
@@ -3766,22 +3755,97 @@ Lc1a1_wait_for_key_press_loop:
 	BEQ	50$
 	TST	MNSEL
 	BEQ	Lc1a1_wait_for_key_press_loop
+	MOV	MNSEL, MNOLD
 	DEC	MNSEL
-	BR	Lc106_menu_redraw_options
+	BR	Lms_move
 50$:	BIT	#PKEYDN, R1
 	BEQ	60$
 	MOV	MNSEL, R0
 	INC	R0
 	CMP	R0, MNCNT
 	BHIS	Lc1a1_wait_for_key_press_loop
+	MOV	MNSEL, MNOLD
 	MOV	R0, MNSEL
-	BR	Lc106_menu_redraw_options
+	BR	Lms_move
 60$:	BIT	#PKEYFR, R1
 	BEQ	Lc1a1_wait_for_key_press_loop
 	MOV	MNSEL, R0
 	RETURN
 Lc100_exit:
 	MOV	#-1, R0
+	RETURN
+
+; The same menu goes on (the caller handled the chosen item and the menu stays on the screen): the cursor loop again
+; without drawing the list. Returns as Lmenu_select
+Lmenu_continue:
+	CLR	@#PPUKEL
+	BR	Lc1a1_wait_for_key_press_loop
+
+; The cursor moved from MNOLD to MNSEL: the ink and the height of the two items, the mark; then the old place is erased
+; and the old item, the new item and the mark are drawn (four CMDSTR)
+Lms_move:
+	MOV	MNOLD, R0
+	CALL	Lms_set_item
+	MOV	MNSEL, R0
+	CALL	Lms_set_item
+	MOV	MNOLD, R0
+	MUL	#MNEBS, R0		; R1 = the offset of its erase block
+	MOV	MNLST, R5
+	ASL	R5			; the byte address of the list
+	ADD	R1, R5
+	CALL	Lms_send
+	MOV	MNOLD, R0
+	CALL	Lms_item_blk
+	CALL	Lms_send
+	MOV	MNSEL, R0
+	CALL	Lms_item_blk
+	CALL	Lms_send
+	MOV	MNCNT, R0		; the mark: after the items in the table
+	CALL	Lms_item_blk
+	CALL	Lms_send
+	BR	Lc1a1_wait_for_key_press_loop
+
+; R0 = the item (MNCNT = the mark) => R5 = its block. Clobbers R1
+Lms_item_blk:
+	MOV	R0, R1
+	ASL	R1
+	ADD	MNTAB1, R1
+	MOV	(R1), R5
+	RETURN
+
+; R5 = a block: the PPU draws it (CMDSTR). Clobbers R0
+Lms_send:
+10$:	TST	@#PPUCOM		; wait for the PPU to be free (it may still read PPUDAT)
+	BNE	10$
+	MOV	R5, R0
+	CLC
+	ROR	R0			; the word address for the PPU
+	MOV	R0, @#PPUDAT
+	PPUCMW	#CMDSTR
+	RETURN
+
+; R0 = the item: its ink and height (the selected one is yellow and double height, the mark is moved to the two columns
+; left of it). Clobbers R0, R1, R2, R5
+Lms_set_item:
+	MOV	R0, -(SP)
+	CALL	Lms_item_blk		; R5 = the block of the item
+	MOV	MNCNT, R0
+	CALL	Lms_item_blk		; R5 = the block of the mark
+	MOV	R5, R2
+	MOV	(SP), R0
+	CALL	Lms_item_blk
+	CMP	(SP)+, MNSEL
+	BEQ	20$
+	MOV	#7, MNB_INK(R5)		; an item: white, normal height
+	MOVB	#'1, MNB_SCALE(R5)
+	RETURN
+20$:	MOV	#6, MNB_INK(R5)
+	MOVB	MNSCL, MNB_SCALE(R5)
+	MOV	(R5), R1
+	SUB	#2, R1
+	MOV	R1, (R2)
+	MOV	#6, MNB_INK(R2)
+	MOVB	MNSCL, MNB_SCALE(R2)
 	RETURN
 
 ; The main menu: arrows up/down select, fire (Shift) chooses. Returns R0 = 0 to start the game,
@@ -3795,18 +3859,22 @@ Lc100_title_redraw:
 	MOV	#MNTAB, R1
 	MOV	#4, R2
 	CALL	Lmenu_select
-	TST	R0
+12$:	TST	R0
 	BMI	20$			; STOP
 	BEQ	30$			; START GAME
 	CMP	R0, #1
 	BNE	15$
-	INC	@#PALNO			; PALETTE: the next palette (the PPU keeps both)
+	INC	@#PALNO			; PALETTE: the next palette (the PPU keeps both); the screen is not drawn again
 	MOV	@#PALNO, @#PPUDAT
 	PPUCMW	#CMDPAL
-	BR	10$
+	CALL	Lmenu_continue
+	BR	12$
 15$:	CMP	R0, #3
-	BNE	10$			; LOAD SAVED GAME: not available yet
+	BNE	17$
 	MOV	#-1, R0			; EXIT
+	BR	20$
+17$:	CALL	Lmenu_continue		; LOAD SAVED GAME: not available yet
+	BR	12$
 20$:
 30$:	RETURN
 
@@ -3830,9 +3898,11 @@ Lpause_menu:
 	MOV	#PMTAB, R1
 	MOV	#3, R2
 	CALL	Lmenu_select
-	CMP	R0, #1
-	BEQ	10$			; SAVE GAME: TODO (needs the disk)
-	BHI	30$			; ABORT GAME
+12$:	CMP	R0, #1
+	BNE	15$
+	CALL	Lmenu_continue		; SAVE GAME: TODO (needs the disk)
+	BR	12$
+15$:	BHI	30$			; ABORT GAME
 	CALL	Ld0ca_draw_in_game_screen
 	MOV	@#PPUTCK, CYCT0		; the time spent in the menu is not a part of the cycle
 	CLR	R0

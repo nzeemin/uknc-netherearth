@@ -14,6 +14,7 @@
 "EXIT"		= "ВЫХОД"
 "ZX SPECTRUM 1987 ICON DESIGN LTD" /
 "UKNC 2026 NZEEMIN  " /
+"\\^, SHIFT" /
 
 [GAME SCREEN]
 " DAY: "	= "ДЕНЬ: "
